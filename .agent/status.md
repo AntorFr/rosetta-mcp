@@ -18,7 +18,7 @@ seule, dans les 2 images du pod alfred) — relais stdio→HTTP avec refresh
 client_credentials, secret du client via coffre (`oidc/agent-alfred`) + addon
 externalSecrets. Bascule `.mcp.json` faite et vérifiée in situ.
 
-**v0.2.0 — addon `google` (phase 1 FAITE, non déployée)** : classe user-data —
+**v0.2.1 — addon `google` DÉPLOYÉ (phase 2 infra faite, 2026-07-20)** : classe user-data —
 politique d'identité par addon (token machine → 403, sub humain requis, propagation
 via contextvar TESTÉE à travers la pile stateless), 6 outils validés par l'utilisateur
 (mail_search/thread/draft + calendar_events/create/update — ni envoi, ni suppression,
@@ -28,11 +28,13 @@ ni labels : la garde EST la surface), credentials Google par `sub` côté serveu
 (pas de device code) — l'identité vient de la session Authelia de la PWA.
 
 **Prochaines étapes :**
-- [ ] **Phase 2 (déploiement google)** : chart rosetta-mcp 0.2.0 (volume /data hostPath,
-      ingress /google/enroll+callback avec middleware forwardAuth Authelia tantive) ;
-      GESTE UTILISATEUR : ajouter https://rosetta.mcp.berard.me/google/callback aux
-      redirect URIs du client OAuth dans la console Google + copier client_secret.json
-      sur le volume ; enrôlement (passkey + consent) ; test e2e outillé
+- [x] Phase 2 infra : volume /mnt/data/rosetta-mcp/data (chown 1000), client_secret.json
+      provisionné (copie pod alfred → tantive), ingress enroll/callback derrière
+      sso-authelia, pod 0.2.1 Running — vérifié live : 3 addons ok, 302 SSO sur
+      /google/enroll, 403 token machine sur /google/, 200 maps intact
+- [ ] GESTE UTILISATEUR restant : ajouter https://rosetta.mcp.berard.me/google/callback
+      aux redirect URIs du client OAuth (console Google), puis enrôlement
+      (https://rosetta.mcp.berard.me/google/enroll — passkey + consent Google)
 - [ ] **Phase 3 (rebond PWA)** : Authelia (client alfred : audience rosetta +
       offline_access + access tokens JWT), agent-gw (refresh token par session, token
       utilisateur injecté aux sessions Claude), rosetta-bridge mode utilisateur ;
