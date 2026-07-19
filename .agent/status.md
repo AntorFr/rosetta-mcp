@@ -38,7 +38,7 @@ ni labels : la garde EST la surface), credentials Google par `sub` côté serveu
       latin-1→UTF-8 + NFC), scopes exacts (gmail.readonly, gmail.compose,
       calendar.events), refresh token 600 côté serveur. 0.2.3 déployée (+ pages
       d'enrôlement stylées, fix threadId brouillon hors fetch best-effort)
-- [ ] Purge S__bastien.json (1er enrôlement mal encodé) sur tantive — rm à nommer
+- [x] Purge S__bastien.json faite (2026-07-20, geste nommé)
 - [ ] **Phase 3 (rebond PWA)** : Authelia (client alfred : audience rosetta +
       offline_access + access tokens JWT), agent-gw (refresh token par session, token
       utilisateur injecté aux sessions Claude), rosetta-bridge mode utilisateur ;
