@@ -32,9 +32,13 @@ ni labels : la garde EST la surface), credentials Google par `sub` côté serveu
       provisionné (copie pod alfred → tantive), ingress enroll/callback derrière
       sso-authelia, pod 0.2.1 Running — vérifié live : 3 addons ok, 302 SSO sur
       /google/enroll, 403 token machine sur /google/, 200 maps intact
-- [ ] GESTE UTILISATEUR restant : ajouter https://rosetta.mcp.berard.me/google/callback
-      aux redirect URIs du client OAuth (console Google), puis enrôlement
-      (https://rosetta.mcp.berard.me/google/enroll — passkey + consent Google)
+- [x] Phase 2 CLOSE (2026-07-20) : client OAuth WEB « rosetta » créé (l'ancien
+      alfred-pod est type installed → pas d'URI custom), client_secret.json web sur le
+      volume, enrôlement Sébastien vérifié — sub UTF-8 propre (fix 0.2.3 : Remote-User
+      latin-1→UTF-8 + NFC), scopes exacts (gmail.readonly, gmail.compose,
+      calendar.events), refresh token 600 côté serveur. 0.2.3 déployée (+ pages
+      d'enrôlement stylées, fix threadId brouillon hors fetch best-effort)
+- [ ] Purge S__bastien.json (1er enrôlement mal encodé) sur tantive — rm à nommer
 - [ ] **Phase 3 (rebond PWA)** : Authelia (client alfred : audience rosetta +
       offline_access + access tokens JWT), agent-gw (refresh token par session, token
       utilisateur injecté aux sessions Claude), rosetta-bridge mode utilisateur ;
