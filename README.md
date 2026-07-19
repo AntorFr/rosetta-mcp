@@ -42,10 +42,25 @@ Per-addon state is reported on `GET /health`. Modules starting with `_` are
 shared helpers, never mounted. Each addon also runs standalone over stdio for
 local debugging (`python -m rosetta.addons.maps`).
 
+### User-data addons (`identity = "user"`)
+
+An addon may declare `identity = "user"`: the hub then refuses machine tokens
+on its path (403) - the bearer token must carry a **human** subject. Tools read
+the caller's claims via a context variable, so a user-data addon keys its
+server-side credential store on `sub`: agents never hold the downstream
+credentials, only their own identity token. Such addons may also register plain
+HTTP routes (`extra_routes` / `open_paths`) for browser-facing enrolment flows,
+guarded by the ingress SSO (forwardAuth) instead of the hub JWT.
+
 Bundled addons: `maps` (Google Routes / Places New / Weather - needs
 `GOOGLE_MAPS_API_KEY`), `transit` (SNCF + IDFM Navitia - needs `SNCF_API_KEY`,
-`IDFM_API_KEY`). Tool descriptions are intentionally in **French**: they are
-runtime UX for the French-speaking agents this hub serves, not documentation.
+`IDFM_API_KEY`), `google` (user-data class: Gmail read/search/**draft-only** +
+Calendar list/create/update - deliberately **no send, no delete, no labels**:
+the guard is the tool surface itself. One-time per-user enrolment at
+`/google/enroll` stores the Google refresh token server-side under
+`ROSETTA_GOOGLE_DATA`). Tool descriptions are intentionally in **French**: they
+are runtime UX for the French-speaking agents this hub serves, not
+documentation.
 
 ## Authentication
 

@@ -14,6 +14,7 @@ own, and every 401 carries the `WWW-Authenticate` header pointing to it.
 from __future__ import annotations
 
 import os
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 import jwt
@@ -24,6 +25,16 @@ _EXEMPT_PREFIXES = ("/health", "/.well-known/")
 
 _ALGORITHMS = ["RS256", "PS256", "ES256"]
 
+# Authelia issues client_credentials tokens with this subject prefix - the
+# discriminant between machine identities and humans.
+MACHINE_SUB_PREFIX = "oauth2:client:"
+
+# Claims of the token authenticating the CURRENT request, for addon tools that
+# need the caller's identity (user-data addons key their credential store on
+# `sub`). Set by the middleware; stateless HTTP keeps handling in-task, which a
+# dedicated test asserts.
+current_claims: ContextVar[dict | None] = ContextVar("rosetta_claims", default=None)
+
 
 @dataclass(frozen=True)
 class AuthConfig:
@@ -32,6 +43,12 @@ class AuthConfig:
     audience: str
     external_url: str
     jwks_uri: str
+    # Mount prefixes (e.g. "/google") that refuse machine tokens: the token
+    # must carry a HUMAN subject (user-data addons).
+    user_only_prefixes: tuple[str, ...] = ()
+    # Extra exempt prefixes (browser-facing addon routes such as enrolment
+    # callbacks, guarded upstream by the ingress forwardAuth instead).
+    open_prefixes: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls) -> "AuthConfig":
@@ -80,7 +97,7 @@ class BearerJWTMiddleware:
             await self.app(scope, receive, send)
             return
         path = scope.get("path", "")
-        if path.startswith(_EXEMPT_PREFIXES):
+        if path.startswith(_EXEMPT_PREFIXES) or path.startswith(self.config.open_prefixes or ()):
             await self.app(scope, receive, send)
             return
 
@@ -92,6 +109,7 @@ class BearerJWTMiddleware:
         scheme, _, token = auth.partition(" ")
 
         error = None
+        status = 401
         if scheme.lower() != "bearer" or not token.strip():
             error = "missing bearer token"
         else:
@@ -100,13 +118,22 @@ class BearerJWTMiddleware:
             except Exception as exc:  # signature, issuer, audience, expiry...
                 error = f"invalid token: {type(exc).__name__}"
             else:
-                # Expose claims to downstream apps (future per-addon authorization).
-                scope.setdefault("state", {})["token_claims"] = claims
+                sub = str(claims.get("sub", ""))
+                if path.startswith(self.config.user_only_prefixes or ()) and (
+                    not sub or sub.startswith(MACHINE_SUB_PREFIX)
+                ):
+                    # User-data addon: a machine identity is not enough.
+                    error, status = "this resource requires a user identity token", 403
+                else:
+                    # Expose claims to downstream apps and addon tools.
+                    scope.setdefault("state", {})["token_claims"] = claims
+                    current_claims.set(claims)
 
         if error is not None:
             response = JSONResponse(
-                {"error": "invalid_token", "error_description": error},
-                status_code=401,
+                {"error": "invalid_token" if status == 401 else "forbidden",
+                 "error_description": error},
+                status_code=status,
                 headers={
                     # RFC 9728 §5.1: point OAuth-aware clients at our metadata.
                     "WWW-Authenticate": (
