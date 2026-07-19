@@ -98,7 +98,14 @@ def _oauth_client() -> dict | str:
 
 def _current_sub() -> str | None:
     claims = current_claims.get()
-    return str(claims["sub"]) if claims and claims.get("sub") else None
+    if not claims:
+        return None
+    # Authelia access tokens may carry an opaque `sub`; the credential store is
+    # keyed on the username - `preferred_username` when the profile scope was
+    # granted (same value as the Remote-User header used at enrolment). NFC to
+    # match the enrolment normalization.
+    value = claims.get("preferred_username") or claims.get("sub")
+    return unicodedata.normalize("NFC", str(value)) if value else None
 
 
 # Access-token cache: sub -> (token, epoch expiry)

@@ -118,6 +118,20 @@ def test_draft_keeps_thread_id_even_if_metadata_fetch_fails(enrolled, monkeypatc
     assert "In-Reply-To" not in raw  # headers skipped, attachment preserved
 
 
+def test_store_keyed_on_preferred_username(enrolled, monkeypatch):
+    """Authelia access tokens may carry an opaque sub: the username claim wins."""
+    current_claims.set({"sub": "opaque-uuid-1234", "preferred_username": "sebastien"})
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        return httpx.Response(200, json={"messages": []})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_search("x"))
+    assert "error" not in out  # resolved the sebastien.json credential
+
+
 def test_no_send_tool_exists():
     tool_names = {t.name for t in run(google.mcp.list_tools())}
     assert tool_names == {
