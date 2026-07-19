@@ -172,6 +172,34 @@ def test_enrolment_flow_end_to_end(data_dir, monkeypatch):
     assert stored["refresh_token"] == "rt-new"
 
 
+def test_enrolment_recovers_utf8_mangled_header(data_dir, monkeypatch):
+    """HTTP headers travel as latin-1 while Authelia emits UTF-8: the accents
+    of « Sébastien » must survive into the stored credential key."""
+    from urllib.parse import parse_qs, urlparse
+
+    from starlette.testclient import TestClient
+
+    from rosetta.main import create_app
+
+    monkeypatch.setenv("ROSETTA_AUTH", "oidc")
+    app = create_app()
+    with TestClient(app) as client:
+        r = client.get("/google/enroll",
+                       headers=[(b"Remote-User", "Sébastien".encode("utf-8"))],
+                       follow_redirects=False)
+        assert r.status_code == 302
+        state = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
+
+        def handler(request):
+            return httpx.Response(200, json={"access_token": "at", "refresh_token": "rt", "scope": ""})
+
+        monkeypatch.setattr(google, "_transport", mock(handler))
+        r = client.get(f"/google/callback?code=abc&state={state}")
+        assert r.status_code == 200 and "Sébastien" in r.text
+    stored = json.loads((data_dir / "users" / "S_bastien.json").read_text())
+    assert stored["sub"] == "Sébastien"
+
+
 def test_calendar_create_all_day_vs_datetime(enrolled, monkeypatch):
     captured = {}
 

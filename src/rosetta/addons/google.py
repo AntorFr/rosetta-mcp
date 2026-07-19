@@ -24,6 +24,7 @@ import os
 import re
 import secrets
 import time
+import unicodedata
 from email.message import EmailMessage
 from urllib.parse import urlencode
 
@@ -434,18 +435,52 @@ def _verify_state(state: str) -> str | None:
         return None
 
 
+def _page(glyph: str, title: str, message: str, status: int = 200) -> HTMLResponse:
+    """Minimal self-contained page for the browser-facing enrolment flow."""
+    return HTMLResponse(f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rosetta — Google</title><style>
+ body{{margin:0;min-height:100vh;display:grid;place-items:center;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:#f4f1ea;color:#2b2b2b}}
+ .card{{max-width:26rem;margin:1rem;padding:2.4rem 2.6rem;border-radius:16px;
+  background:#fff;box-shadow:0 10px 34px rgba(0,0,0,.09);text-align:center}}
+ .glyph{{font-size:2.6rem;line-height:1}}
+ h1{{font-size:.82rem;letter-spacing:.22em;text-transform:uppercase;
+  opacity:.5;margin:1rem 0 .4rem}}
+ h2{{font-size:1.15rem;margin:.2rem 0 .8rem}}
+ p{{line-height:1.55;margin:0;opacity:.85}}
+ @media (prefers-color-scheme:dark){{
+  body{{background:#171614;color:#eae6df}}
+  .card{{background:#232019;box-shadow:0 10px 34px rgba(0,0,0,.55)}}}}
+</style></head><body><div class="card">
+<div class="glyph">{glyph}</div><h1>Rosetta · Google</h1>
+<h2>{title}</h2><p>{message}</p>
+</div></body></html>""", status_code=status)
+
+
 def _remote_user(request) -> str | None:
     # Set by the Authelia forwardAuth in front of these paths (ingress-level).
-    return request.headers.get("Remote-User")
+    value = request.headers.get("Remote-User")
+    if value is None:
+        return None
+    # HTTP headers are latin-1 on the wire but Authelia emits UTF-8 bytes:
+    # recover accents ("SÃ©bastien" -> "Sébastien"), then normalize (NFC) so
+    # the credential key is stable across clients and keyboards.
+    try:
+        value = value.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    return unicodedata.normalize("NFC", value)
 
 
 async def enroll(request):
     sub = _remote_user(request)
     if not sub:
-        return HTMLResponse("<p>Accès direct refusé : cette page passe par le SSO.</p>", status_code=403)
+        return _page("🚪", "Accès refusé", "Cette page passe par le SSO de la maison — pas par la porte de service.", 403)
     client = _oauth_client()
     if isinstance(client, str):
-        return HTMLResponse(f"<p>{client}</p>", status_code=500)
+        return _page("🧩", "Configuration absente", client, 500)
     external = os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me").rstrip("/")
     params = {
         "client_id": client["client_id"],
@@ -464,10 +499,10 @@ async def callback(request):
     code = request.query_params.get("code")
     sub = _verify_state(state)
     if not sub or not code:
-        return HTMLResponse("<p>Flux invalide ou expiré — reprendre depuis /google/enroll.</p>", status_code=400)
+        return _page("⏳", "Flux invalide ou expiré", "Reprendre depuis /google/enroll — le lien n'est valable que dix minutes.", 400)
     client = _oauth_client()
     if isinstance(client, str):
-        return HTMLResponse(f"<p>{client}</p>", status_code=500)
+        return _page("🧩", "Configuration absente", client, 500)
     external = os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me").rstrip("/")
     async with _client() as http:
         r = await http.post(GOOGLE_TOKEN_URL, data={
@@ -480,7 +515,7 @@ async def callback(request):
         data = r.json()
     if r.status_code != 200 or not data.get("refresh_token"):
         detail = data.get("error", f"HTTP {r.status_code}") if isinstance(data, dict) else r.status_code
-        return HTMLResponse(f"<p>Échange Google refusé ({detail}).</p>", status_code=502)
+        return _page("🛑", "Échange refusé par Google", f"Détail : {detail}. Reprendre depuis /google/enroll.", 502)
     os.makedirs(os.path.join(_data_dir(), "users"), exist_ok=True)
     path = _user_file(sub)
     with open(path, "w") as f:
@@ -492,7 +527,9 @@ async def callback(request):
         }, f)
     os.chmod(path, 0o600)
     _token_cache.pop(sub, None)
-    return HTMLResponse(f"<p>Compte Google enrôlé pour <b>{sub}</b>. Cette page peut être fermée.</p>")
+    return _page("🔏", "Compte enrôlé",
+                 f"Le compte Google de <b>{sub}</b> est désormais au service de la maison. "
+                 "Cette page peut être fermée.")
 
 
 extra_routes = [("/enroll", enroll, ["GET"]), ("/callback", callback, ["GET"])]
