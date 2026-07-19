@@ -109,7 +109,10 @@ def test_no_send_tool_exists():
 def test_state_sign_and_verify(data_dir):
     state = google._sign_state("sebastien")
     assert google._verify_state(state) == "sebastien"
-    assert google._verify_state(state + "x") is None
+    # Forgery: altering the signed payload without re-signing must fail.
+    expiry, _sub, sig = base64.urlsafe_b64decode(state.encode()).decode().split(".", 2)
+    forged = base64.urlsafe_b64encode(f"{expiry}.attacker.{sig}".encode()).decode()
+    assert google._verify_state(forged) is None
     assert google._verify_state("garbage") is None
 
 
