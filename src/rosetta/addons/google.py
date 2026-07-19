@@ -274,6 +274,11 @@ async def mail_draft(to: str, subject: str, body: str, thread_id: str | None = N
     message: dict = {}
     async with _client() as http:
         if thread_id:
+            # Gmail nests a draft in a thread ONLY if threadId is set on the
+            # draft's message RESOURCE - headers alone leave it orphaned. Set it
+            # unconditionally; the metadata fetch below only serves the
+            # In-Reply-To/References headers and stays best-effort.
+            message["threadId"] = thread_id
             r = await http.get(
                 f"{GMAIL}/threads/{thread_id}",
                 params={"format": "metadata", "metadataHeaders": ["Message-ID"]},
@@ -285,7 +290,6 @@ async def mail_draft(to: str, subject: str, body: str, thread_id: str | None = N
                 if last_mid:
                     mime["In-Reply-To"] = last_mid
                     mime["References"] = last_mid
-                message["threadId"] = thread_id
         message["raw"] = base64.urlsafe_b64encode(mime.as_bytes()).decode()
         r = await http.post(f"{GMAIL}/drafts", json={"message": message}, headers=headers)
         data = r.json()

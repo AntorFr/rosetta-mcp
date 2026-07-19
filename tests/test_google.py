@@ -98,6 +98,26 @@ def test_mail_draft_builds_reply_mime(enrolled, monkeypatch):
     assert "Re: =?utf-8?q?R=C3=A9sa?=" in raw or "Re: Résa" in raw
 
 
+def test_draft_keeps_thread_id_even_if_metadata_fetch_fails(enrolled, monkeypatch):
+    """The thread attachment must never depend on the best-effort header fetch."""
+    captured = {}
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if "/threads/" in request.url.path:
+            return httpx.Response(500, json={})
+        captured.update(json.loads(request.read()))
+        return httpx.Response(200, json={"id": "d2"})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_draft("x@y.z", "Re: Résa", "Corps.", thread_id="t1"))
+    assert out["draft_id"] == "d2"
+    assert captured["message"]["threadId"] == "t1"
+    raw = base64.urlsafe_b64decode(captured["message"]["raw"]).decode()
+    assert "In-Reply-To" not in raw  # headers skipped, attachment preserved
+
+
 def test_no_send_tool_exists():
     tool_names = {t.name for t in run(google.mcp.list_tools())}
     assert tool_names == {
