@@ -39,10 +39,13 @@ ni labels : la garde EST la surface), credentials Google par `sub` côté serveu
       calendar.events), refresh token 600 côté serveur. 0.2.3 déployée (+ pages
       d'enrôlement stylées, fix threadId brouillon hors fetch best-effort)
 - [x] Purge S__bastien.json faite (2026-07-20, geste nommé)
-- [ ] **Phase 3 (rebond PWA)** : Authelia (client alfred : audience rosetta +
-      offline_access + access tokens JWT), agent-gw (refresh token par session, token
-      utilisateur injecté aux sessions Claude), rosetta-bridge mode utilisateur ;
-      puis dégraissage google des 2 images alfred + avenant D17/D24 côté cerveau
+- [x] Phase 3 DÉPLOYÉE (2026-07-20) : Authelia client alfred (offline_access +
+      audience rosetta + RS256 + consent implicit), agent-gw 0.21.0 (refresh tokens
+      par utilisateur côté serveur, ROSETTA_USER_TOKEN par tour), bridge v2 (cascade
+      session→machine), .mcp.json google → hub (0.2.4 : clé preferred_username).
+      E2E : re-login PWA puis test Gmail ; si sub opaque → claims_policy Authelia
+- [ ] Après e2e : dégraissage google des 2 images alfred (workspace-mcp + creds
+      ~/.google_workspace_mcp) + avenant D17/D24 et skill correspondance (cerveau)
 - [ ] Dégraissage agent-gw (0.21.0) : retirer `mcp_servers/` + les 3 clés d'API de
       l'externalSecrets d'alfred-helm.yml, après quelques jours sans accroc
 - [ ] Client `agent-skippy` + bridge sur le Mac (sessions Skippy locales)
