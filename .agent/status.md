@@ -27,7 +27,7 @@ ni labels : la garde EST la surface), credentials Google par `sub` côté serveu
 (state HMAC, gardé par forwardAuth ingress). 20 tests. Identité v1 choisie : REBOND PWA
 (pas de device code) — l'identité vient de la session Authelia de la PWA.
 
-**v0.3.0 — 7e outil `mail_attachment` (2026-07-21, code + tests, PAS ENCORE DÉPLOYÉ)** :
+**v0.3.0 — 7e outil `mail_attachment` (2026-07-21, DÉPLOYÉ tantive)** :
 lecture des pièces jointes, surface étendue 6→7 (changement délibéré, canari
 `test_no_send_tool_exists` mis à jour). Deux modes : transcription TEXTE par défaut
 (texte/CSV/JSON + PDF via `pypdf`, octets bruts jamais renvoyés) et `raw=True` qui
@@ -36,9 +36,10 @@ lecture pure — `gmail.readonly` déjà accordé, aucun nouveau scope, aucune �
 Nouvelle dep : `pypdf>=5`. 25 tests.
 
 **Prochaines étapes :**
-- [ ] Déployer 0.3.0 : build image GHCR (tag) → bump chart `rosetta-mcp` → manifeste
-      HelmChart k8s-home-lab → rollout tantive ; vérifier `pypdf` dans l'image et
-      e2e `mail_attachment` (liste + PDF texte + raw) live
+- [x] Déployé 0.3.0 (2026-07-21) : tag v0.3.0 → image GHCR multi-arch → bump tag
+      k8s (0.2.4→0.3.0, chart inchangé) → rollout tantive. Vérifié DANS le pod :
+      pypdf 6.14.2, 7 outils dont mail_attachment, /health 200. Reste l'e2e Gmail
+      réel (PDF) — exige un token humain, à faire par l'Alfred du pod sur demande
 - [x] Phase 2 infra : volume /mnt/data/rosetta-mcp/data (chown 1000), client_secret.json
       provisionné (copie pod alfred → tantive), ingress enroll/callback derrière
       sso-authelia, pod 0.2.1 Running — vérifié live : 3 addons ok, 302 SSO sur
