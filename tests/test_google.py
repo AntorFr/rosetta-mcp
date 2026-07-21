@@ -135,9 +135,11 @@ def test_store_keyed_on_preferred_username(enrolled, monkeypatch):
 def test_no_send_tool_exists():
     tool_names = {t.name for t in run(google.mcp.list_tools())}
     assert tool_names == {
-        "mail_search", "mail_thread", "mail_draft",
+        "mail_search", "mail_thread", "mail_attachment", "mail_draft",
         "calendar_events", "calendar_create", "calendar_update",
     }
+    # The point of pinning the set: no send, no delete, no label tool ever slips in.
+    assert not any(("send" in n) or ("delete" in n) or ("label" in n) for n in tool_names)
 
 
 def test_state_sign_and_verify(data_dir):
@@ -229,3 +231,99 @@ def test_calendar_create_all_day_vs_datetime(enrolled, monkeypatch):
     assert captured["start"] == {"date": "2026-08-01"}
     run(google.calendar_create("Dîner", "2026-08-01T20:00:00+02:00", "2026-08-01T22:00:00+02:00"))
     assert "dateTime" in captured["start"]
+
+
+# -- mail_attachment -------------------------------------------------------
+
+def _msg_with_attachment(filename, mime, att_id="att-1", size=10):
+    """A format=full message payload carrying one attachment part."""
+    return {"payload": {"parts": [
+        {"filename": "", "mimeType": "text/plain", "body": {"data": ""}},
+        {"filename": filename, "mimeType": mime,
+         "body": {"attachmentId": att_id, "size": size}},
+    ]}}
+
+
+def test_mail_attachment_lists(enrolled, monkeypatch):
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        return httpx.Response(200, json=_msg_with_attachment("avoir.pdf", "application/pdf",
+                                                             att_id="att-9", size=12345))
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_attachment("m1"))
+    assert out["attachments"] == [
+        {"attachment_id": "att-9", "filename": "avoir.pdf",
+         "mime_type": "application/pdf", "size_bytes": 12345},
+    ]
+
+
+def test_mail_attachment_fetches_text(enrolled, monkeypatch):
+    payload = base64.urlsafe_b64encode("Montant : 42,00 €".encode()).decode()
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if "/attachments/" in request.url.path:
+            return httpx.Response(200, json={"data": payload})
+        return httpx.Response(200, json=_msg_with_attachment("note.txt", "text/plain"))
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_attachment("m1", "att-1"))
+    assert out["mime_type"] == "text/plain"
+    assert "42,00" in out["text"]
+    assert "data_base64" not in out
+
+
+def test_mail_attachment_pdf_routed_to_extractor(enrolled, monkeypatch):
+    raw = b"%PDF-1.4 fake bytes"
+    payload = base64.urlsafe_b64encode(raw).decode()
+    monkeypatch.setattr(google, "_pdf_to_text", lambda b: f"[{len(b)}o] Total: 42 EUR")
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if "/attachments/" in request.url.path:
+            return httpx.Response(200, json={"data": payload})
+        return httpx.Response(200, json=_msg_with_attachment("avoir.pdf", "application/pdf"))
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_attachment("m1", "att-1"))
+    assert out["mime_type"] == "application/pdf"
+    assert "Total: 42 EUR" in out["text"]
+
+
+def test_mail_attachment_binary_points_to_raw(enrolled, monkeypatch):
+    payload = base64.urlsafe_b64encode(b"\x89PNG\r\n\x1a\n....").decode()
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if "/attachments/" in request.url.path:
+            return httpx.Response(200, json={"data": payload})
+        return httpx.Response(200, json=_msg_with_attachment("photo.png", "image/png"))
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_attachment("m1", "att-1"))
+    assert "text" not in out
+    assert "raw=True" in out["note"] and "image/png" in out["note"]
+
+
+def test_mail_attachment_raw_returns_native_bytes(enrolled, monkeypatch):
+    blob = b"\x89PNG\r\n\x1a\nnative-bytes"
+    payload = base64.urlsafe_b64encode(blob).decode()
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if "/attachments/" in request.url.path:
+            return httpx.Response(200, json={"data": payload})
+        return httpx.Response(200, json=_msg_with_attachment("photo.png", "image/png",
+                                                             size=len(blob)))
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_attachment("m1", "att-1", raw=True))
+    assert out["encoding"] == "base64"
+    assert base64.b64decode(out["data_base64"]) == blob
+    assert "text" not in out

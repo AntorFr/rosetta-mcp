@@ -1,7 +1,7 @@
 """`google` addon - Gmail + Calendar for the household agents, user-data class.
 
 Contract (the guard IS the tool surface - deliberately narrow):
-  - mail_search / mail_thread : read-only Gmail
+  - mail_search / mail_thread / mail_attachment : read-only Gmail
   - mail_draft               : creates a DRAFT, never sends - no send tool exists
   - calendar_events / calendar_create / calendar_update : no delete tool exists
 
@@ -193,6 +193,45 @@ def _truncate(text: str, limit: int = 3000) -> str:
     return text if len(text) <= limit else text[:limit] + "\n[… tronqué]"
 
 
+# Attachment rendering budgets. Text is transcribed server-side and truncated;
+# raw retrieval hands back the bytes (base64) once, so it is capped hard.
+ATTACHMENT_TEXT_LIMIT = 20000
+ATTACHMENT_RAW_MAX = 10 * 1024 * 1024
+_TEXT_MIMES = {"application/json", "application/xml"}
+
+
+def _list_attachments(payload: dict) -> list[dict]:
+    """Inventory of real attachments (a part with a filename and an attachmentId),
+    walking the MIME tree depth-first."""
+    found: list[dict] = []
+
+    def walk(part: dict) -> None:
+        body = part.get("body") or {}
+        if part.get("filename") and body.get("attachmentId"):
+            found.append({
+                "attachment_id": body["attachmentId"],
+                "filename": part.get("filename"),
+                "mime_type": part.get("mimeType"),
+                "size_bytes": body.get("size"),
+            })
+        for sub in part.get("parts") or []:
+            walk(sub)
+
+    walk(payload)
+    return found
+
+
+def _pdf_to_text(raw: bytes) -> str:
+    """Extract text from a PDF's bytes. Lazy import: pypdf is only pulled when a
+    PDF is actually opened, and it is trivial to stub in tests."""
+    import io
+
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(raw))
+    return "\n".join((page.extract_text() or "") for page in reader.pages)
+
+
 # --------------------------------------------------------------------------
 # Tools - Gmail (lecture + brouillon, jamais d'envoi)
 # --------------------------------------------------------------------------
@@ -260,6 +299,80 @@ async def mail_thread(thread_id: str) -> dict:
             "body": _truncate(_extract_body(payload) or msg.get("snippet", "")),
         })
     return {"thread_id": thread_id, "subject": subject, "messages": messages}
+
+
+@mcp.tool()
+async def mail_attachment(message_id: str, attachment_id: str | None = None,
+                          raw: bool = False) -> dict:
+    """Lit ou rapatrie les pièces jointes d'un mail Gmail.
+
+    - Sans `attachment_id` : liste les pièces jointes du message (nom, type, taille, id).
+    - Avec `attachment_id` (défaut) : rend la pièce en TEXTE quand c'est possible
+      (texte brut, CSV/JSON, PDF) — pour la LIRE. Un binaire opaque (image, archive)
+      ne renvoie que ses métadonnées, jamais les octets bruts.
+    - Avec `raw=True` : rapatrie la pièce au FORMAT NATIF (octets en base64), pour la
+      STOCKER telle quelle (mémoire, pièce jointe d'une fiche). Plafonné en taille.
+
+    message_id : l'id du message (donné par mail_search).
+    attachment_id : l'id de la pièce (donné par ce même outil en mode liste).
+    raw : True pour récupérer les octets bruts au lieu d'une transcription texte.
+    """
+    auth = await _authed()
+    if isinstance(auth, dict):
+        return auth
+    _, headers = auth
+
+    async with _client() as http:
+        meta = await http.get(f"{GMAIL}/messages/{message_id}",
+                              params={"format": "full"}, headers=headers)
+        meta_data = meta.json()
+        if meta.status_code != 200:
+            return {"error": dig(meta_data, "error", "message", default=f"HTTP {meta.status_code}")}
+        attachments = _list_attachments(meta_data.get("payload") or {})
+
+        if not attachment_id:
+            return {"message_id": message_id, "attachments": attachments}
+
+        info = next((a for a in attachments if a["attachment_id"] == attachment_id), None)
+        r = await http.get(
+            f"{GMAIL}/messages/{message_id}/attachments/{attachment_id}", headers=headers)
+        data = r.json()
+    if r.status_code != 200:
+        return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+
+    content = base64.urlsafe_b64decode(data["data"] + "=" * (-len(data["data"]) % 4))
+    mime = (info or {}).get("mime_type") or ""
+    filename = (info or {}).get("filename")
+    out: dict = {"message_id": message_id, "attachment_id": attachment_id,
+                 "filename": filename, "mime_type": mime, "size_bytes": len(content)}
+
+    # Native retrieval: hand back the bytes (base64) so the caller can persist the
+    # file as-is. Capped: the blob crosses the agent context once, so refuse to
+    # inline anything oversized rather than blow the window.
+    if raw:
+        if len(content) > ATTACHMENT_RAW_MAX:
+            out["note"] = (f"trop volumineux pour un rapatriement inline "
+                           f"({len(content)} octets > {ATTACHMENT_RAW_MAX}).")
+            return out
+        out["encoding"] = "base64"
+        out["data_base64"] = base64.b64encode(content).decode()
+        return out
+
+    # Reading: transcribe to text server-side; only the text crosses to the agent.
+    if mime.startswith("text/") or mime in _TEXT_MIMES:
+        out["text"] = _truncate(content.decode("utf-8", "replace"), ATTACHMENT_TEXT_LIMIT)
+    elif mime == "application/pdf" or (filename or "").lower().endswith(".pdf"):
+        try:
+            text = _pdf_to_text(content)
+        except Exception as exc:  # encrypted, corrupt, or not really a PDF
+            out["note"] = f"PDF illisible (chiffré ou corrompu ?) : {exc}"
+            return out
+        out["text"] = _truncate(text, ATTACHMENT_TEXT_LIMIT) or \
+            "[PDF sans texte extractible — probablement un scan image ; utiliser raw=True pour le stocker]"
+    else:
+        out["note"] = (f"type binaire non transcrit ({mime or 'inconnu'}) — "
+                       f"{len(content)} octets ; utiliser raw=True pour le rapatrier au format natif.")
+    return out
 
 
 @mcp.tool()

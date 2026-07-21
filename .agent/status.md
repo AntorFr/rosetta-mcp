@@ -1,6 +1,6 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-07-20
+> MàJ : 2026-07-21
 
 **État :** **v0.1.0 EN PROD** sur `https://rosetta.mcp.berard.me` (tantive, chart
 `rosetta-mcp` 0.1.0, image GHCR multi-arch). Hub MCP modulaire : addons `maps` +
@@ -27,7 +27,18 @@ ni labels : la garde EST la surface), credentials Google par `sub` côté serveu
 (state HMAC, gardé par forwardAuth ingress). 20 tests. Identité v1 choisie : REBOND PWA
 (pas de device code) — l'identité vient de la session Authelia de la PWA.
 
+**v0.3.0 — 7e outil `mail_attachment` (2026-07-21, code + tests, PAS ENCORE DÉPLOYÉ)** :
+lecture des pièces jointes, surface étendue 6→7 (changement délibéré, canari
+`test_no_send_tool_exists` mis à jour). Deux modes : transcription TEXTE par défaut
+(texte/CSV/JSON + PDF via `pypdf`, octets bruts jamais renvoyés) et `raw=True` qui
+rapatrie les octets natifs en base64 (plafond 10 Mio) pour stockage mémoire. Reste
+lecture pure — `gmail.readonly` déjà accordé, aucun nouveau scope, aucune écriture.
+Nouvelle dep : `pypdf>=5`. 25 tests.
+
 **Prochaines étapes :**
+- [ ] Déployer 0.3.0 : build image GHCR (tag) → bump chart `rosetta-mcp` → manifeste
+      HelmChart k8s-home-lab → rollout tantive ; vérifier `pypdf` dans l'image et
+      e2e `mail_attachment` (liste + PDF texte + raw) live
 - [x] Phase 2 infra : volume /mnt/data/rosetta-mcp/data (chown 1000), client_secret.json
       provisionné (copie pod alfred → tantive), ingress enroll/callback derrière
       sso-authelia, pod 0.2.1 Running — vérifié live : 3 addons ok, 302 SSO sur
@@ -45,7 +56,9 @@ ni labels : la garde EST la surface), credentials Google par `sub` côté serveu
       session→machine), .mcp.json google → hub (0.2.4 : clé preferred_username).
       E2E : re-login PWA puis test Gmail ; si sub opaque → claims_policy Authelia
 - [ ] Après e2e : dégraissage google des 2 images alfred (workspace-mcp + creds
-      ~/.google_workspace_mcp) + avenant D17/D24 et skill correspondance (cerveau)
+      ~/.google_workspace_mcp) + avenant D17/D24 et skill correspondance (cerveau) —
+      surface RÉELLE = 7 outils rosetta (dont `mail_attachment`), corriger la fiche
+      périmée qui décrit workspace-mcp et promet une lecture de PJ qui n'existait pas
 - [ ] Dégraissage agent-gw (0.21.0) : retirer `mcp_servers/` + les 3 clés d'API de
       l'externalSecrets d'alfred-helm.yml, après quelques jours sans accroc
 - [ ] Client `agent-skippy` + bridge sur le Mac (sessions Skippy locales)
