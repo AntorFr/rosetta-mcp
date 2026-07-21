@@ -359,9 +359,15 @@ async def mail_attachment(message_id: str, attachment_id: str | None = None,
         return out
 
     # Reading: transcribe to text server-side; only the text crosses to the agent.
-    if mime.startswith("text/") or mime in _TEXT_MIMES:
-        out["text"] = _truncate(content.decode("utf-8", "replace"), ATTACHMENT_TEXT_LIMIT)
-    elif mime == "application/pdf" or (filename or "").lower().endswith(".pdf"):
+    # Gmail's declared MIME is unreliable — senders routinely mislabel attachments
+    # as application/octet-stream, or drop the .pdf extension. So we SNIFF the bytes:
+    # the magic number is ground truth, the label is only a hint.
+    head = content[:1024]
+    looks_pdf = (mime == "application/pdf" or (filename or "").lower().endswith(".pdf")
+                 or b"%PDF-" in head)
+    looks_text = mime.startswith("text/") or mime in _TEXT_MIMES
+
+    if looks_pdf:
         try:
             text = _pdf_to_text(content)
         except Exception as exc:  # encrypted, corrupt, or not really a PDF
@@ -369,9 +375,12 @@ async def mail_attachment(message_id: str, attachment_id: str | None = None,
             return out
         out["text"] = _truncate(text, ATTACHMENT_TEXT_LIMIT) or \
             "[PDF sans texte extractible — probablement un scan image ; utiliser raw=True pour le stocker]"
+    elif looks_text:
+        out["text"] = _truncate(content.decode("utf-8", "replace"), ATTACHMENT_TEXT_LIMIT)
     else:
-        out["note"] = (f"type binaire non transcrit ({mime or 'inconnu'}) — "
-                       f"{len(content)} octets ; utiliser raw=True pour le rapatrier au format natif.")
+        out["note"] = (f"type non transcrit (déclaré : {mime or 'inconnu'}, fichier : "
+                       f"{filename or 'sans nom'}) — {len(content)} octets ; "
+                       f"utiliser raw=True pour le rapatrier au format natif.")
     return out
 
 

@@ -327,3 +327,24 @@ def test_mail_attachment_raw_returns_native_bytes(enrolled, monkeypatch):
     assert out["encoding"] == "base64"
     assert base64.b64decode(out["data_base64"]) == blob
     assert "text" not in out
+
+
+def test_mail_attachment_sniffs_mislabeled_pdf(enrolled, monkeypatch):
+    """Senders mislabel PDFs as octet-stream and drop the .pdf extension: the byte
+    magic (%PDF-) must still route to text extraction, not the binary fallback."""
+    raw = b"%PDF-1.7\n... a real pdf, wrongly typed ..."
+    payload = base64.urlsafe_b64encode(raw).decode()
+    monkeypatch.setattr(google, "_pdf_to_text", lambda b: "Avoir d'acompte : 42,00 EUR")
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if "/attachments/" in request.url.path:
+            return httpx.Response(200, json={"data": payload})
+        # mislabeled: octet-stream, and a filename WITHOUT a .pdf extension
+        return httpx.Response(200, json=_msg_with_attachment("avoir", "application/octet-stream"))
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_attachment("m1", "att-1"))
+    assert "Avoir d'acompte : 42,00 EUR" in out["text"]
+    assert "note" not in out

@@ -33,7 +33,13 @@ lecture des pièces jointes, surface étendue 6→7 (changement délibéré, can
 (texte/CSV/JSON + PDF via `pypdf`, octets bruts jamais renvoyés) et `raw=True` qui
 rapatrie les octets natifs en base64 (plafond 10 Mio) pour stockage mémoire. Reste
 lecture pure — `gmail.readonly` déjà accordé, aucun nouveau scope, aucune écriture.
-Nouvelle dep : `pypdf>=5`. 25 tests.
+Nouvelle dep : `pypdf>=5`.
+
+**v0.3.1 (2026-07-21)** : correctif — la détection de type ne se fie plus à l'étiquette
+MIME de Gmail (les expéditeurs mettent souvent `application/octet-stream` + un nom sans
+`.pdf`, ce qui envoyait le PDF en branche « binaire non transcrit » sans jamais appeler
+pypdf). Sniff du magic `%PDF-` sur les octets → un PDF mal étiqueté est désormais
+transcrit. Prouvé bout-en-bout sur un vrai PDF. 29 tests.
 
 **Prochaines étapes :**
 - [x] Déployé 0.3.0 (2026-07-21) : tag v0.3.0 → image GHCR multi-arch → bump tag
