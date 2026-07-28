@@ -54,7 +54,9 @@ guarded by the ingress SSO (forwardAuth) instead of the hub JWT.
 
 Bundled addons: `maps` (Google Routes / Places New / Weather - needs
 `GOOGLE_MAPS_API_KEY`), `transit` (SNCF + IDFM Navitia - needs `SNCF_API_KEY`,
-`IDFM_API_KEY`), `google` (user-data class: Gmail search / read / attachment / **draft-only** +
+`IDFM_API_KEY`), `google` (user-data class: Gmail search / read / attachment +
+**drafts only** - list, read, create and amend, each answering with a `link` straight
+to the draft in the Gmail web UI - plus
 Calendar list/create/update - deliberately **no send, no delete, no labels**:
 the guard is the tool surface itself. Attachments come back transcribed to text
 (PDF via pypdf) for reading, or as raw base64 (`raw=True`) for native storage. One-time per-user enrolment at

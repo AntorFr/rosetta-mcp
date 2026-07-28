@@ -2,7 +2,8 @@
 
 Contract (the guard IS the tool surface - deliberately narrow):
   - mail_search / mail_thread / mail_attachment : read-only Gmail
-  - mail_draft               : creates a DRAFT, never sends - no send tool exists
+  - mail_drafts / mail_draft / mail_draft_update : list, read, create and amend
+    DRAFTS - never sends, never deletes: no such tool exists
   - calendar_events / calendar_create / calendar_update : no delete tool exists
 
 Identity: `identity = "user"` - the hub refuses machine tokens on /google, so
@@ -41,13 +42,17 @@ identity = "user"
 mcp = new_server("google")
 
 GMAIL = "https://gmail.googleapis.com/gmail/v1/users/me"
+GMAIL_WEB = "https://mail.google.com/mail"
 CALENDAR = "https://www.googleapis.com/calendar/v3"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 
-# gmail.compose is the narrowest scope that allows draft creation. It nominally
-# permits sending too - the guarantee that no mail ever leaves is that NO send
-# tool exists in this module and the credentials never leave the server.
+# gmail.compose is the narrowest scope that allows drafts to be created AND
+# amended (drafts.update lives behind the same scope - no re-enrolment was needed
+# to gain the amendment tools). It nominally permits sending and draft deletion
+# too - the guarantee that no mail ever leaves, and that nothing is destroyed, is
+# that NO send and NO delete tool exists in this module, and the credentials never
+# leave the server.
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.compose",
@@ -199,6 +204,10 @@ ATTACHMENT_TEXT_LIMIT = 20000
 ATTACHMENT_RAW_MAX = 10 * 1024 * 1024
 _TEXT_MIMES = {"application/json", "application/xml"}
 
+# Display cap when re-reading a draft. Generous: a draft is our own short prose,
+# and a body clipped on screen must never be mistaken for the body on file.
+DRAFT_BODY_LIMIT = 20000
+
 
 def _list_attachments(payload: dict) -> list[dict]:
     """Inventory of real attachments (a part with a filename and an attachmentId),
@@ -219,6 +228,66 @@ def _list_attachments(payload: dict) -> list[dict]:
 
     walk(payload)
     return found
+
+
+# Mailbox address cache: sub -> address (or "0"). Only used to build web links.
+_mailbox_cache: dict[str, str] = {}
+
+
+async def _mailbox(http, headers: dict) -> str:
+    """The account segment of a Gmail web URL for the calling user.
+
+    Gmail addresses a mailbox by its index (/mail/u/0/) OR by its address
+    (/mail/u/someone@example.com/), the latter resolving to the right index
+    whichever accounts are signed in - which is what we want, since we cannot know
+    the browser's account order. Falls back to index 0 if the profile is
+    unreadable. Cached: the address never changes for a given subject.
+    """
+    sub = _current_sub() or ""
+    if sub not in _mailbox_cache:
+        try:
+            r = await http.get(f"{GMAIL}/profile", headers=headers)
+            address = r.json().get("emailAddress") if r.status_code == 200 else None
+        except Exception:
+            address = None
+        _mailbox_cache[sub] = address or "0"
+    return _mailbox_cache[sub]
+
+
+def _draft_link(mailbox: str, message_id: str | None) -> str | None:
+    """Deep link to a draft in the Gmail web UI.
+
+    The fragment carries the DRAFT'S MESSAGE id (hex, e.g. 19faa841267fcac6), not
+    the draft id (`r-84…`) - opening the latter yields nothing. Note the message id
+    is reminted on every amendment, so a link taken before an update goes stale.
+    """
+    return f"{GMAIL_WEB}/u/{mailbox}/#drafts/{message_id}" if message_id else None
+
+
+def _build_mime(to: str, subject: str, body: str, in_reply_to: str | None = None,
+                references: str | None = None) -> str:
+    """A plain-text draft, base64url-encoded for the Gmail `raw` field."""
+    mime = EmailMessage()
+    mime["To"] = to
+    mime["Subject"] = subject
+    if in_reply_to:
+        mime["In-Reply-To"] = in_reply_to
+        mime["References"] = references or in_reply_to
+    mime.set_content(body)
+    return base64.urlsafe_b64encode(mime.as_bytes()).decode()
+
+
+def _draft_summary(draft: dict, mailbox: str) -> dict:
+    """id, headers and web link of a draft, from a format=metadata (or full) drafts.get."""
+    payload = dig(draft, "message", "payload", default={}) or {}
+    return {
+        "draft_id": draft.get("id"),
+        "thread_id": dig(draft, "message", "threadId"),
+        "to": _header(payload, "To"),
+        "subject": _header(payload, "Subject"),
+        "date": _header(payload, "Date"),
+        "link": _draft_link(mailbox, dig(draft, "message", "id")),
+    }
 
 
 def _pdf_to_text(raw: bytes) -> str:
@@ -392,16 +461,17 @@ async def mail_draft(to: str, subject: str, body: str, thread_id: str | None = N
     subject : objet (mettre « Re: … » pour une réponse).
     body : corps du message, texte brut.
     thread_id : optionnel, pour rattacher le brouillon à un fil existant.
+
+    Rend `draft_id` (pour corriger ensuite via mail_draft_update) et `link`, l'URL
+    du brouillon dans Gmail — à donner telle quelle à l'utilisateur pour qu'il
+    l'ouvre, le relise et l'envoie.
     """
     auth = await _authed()
     if isinstance(auth, dict):
         return auth
     _, headers = auth
-    mime = EmailMessage()
-    mime["To"] = to
-    mime["Subject"] = subject
-    mime.set_content(body)
     message: dict = {}
+    last_mid = None
     async with _client() as http:
         if thread_id:
             # Gmail nests a draft in a thread ONLY if threadId is set on the
@@ -417,15 +487,117 @@ async def mail_draft(to: str, subject: str, body: str, thread_id: str | None = N
             if r.status_code == 200:
                 msgs = r.json().get("messages") or []
                 last_mid = _header((msgs[-1].get("payload") or {}), "Message-ID") if msgs else None
-                if last_mid:
-                    mime["In-Reply-To"] = last_mid
-                    mime["References"] = last_mid
-        message["raw"] = base64.urlsafe_b64encode(mime.as_bytes()).decode()
+        message["raw"] = _build_mime(to, subject, body, in_reply_to=last_mid)
         r = await http.post(f"{GMAIL}/drafts", json={"message": message}, headers=headers)
         data = r.json()
-    if r.status_code != 200:
-        return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
-    return {"draft_id": data.get("id"), "status": "brouillon déposé dans Gmail — à relire et envoyer par l'utilisateur"}
+        if r.status_code != 200:
+            return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+        mailbox = await _mailbox(http, headers)
+    return {"draft_id": data.get("id"),
+            "link": _draft_link(mailbox, dig(data, "message", "id")),
+            "status": "brouillon déposé dans Gmail — à relire et envoyer par l'utilisateur"}
+
+
+@mcp.tool()
+async def mail_drafts(draft_id: str | None = None, max_results: int = 10) -> dict:
+    """Liste les brouillons Gmail, ou relit l'un d'eux en entier.
+
+    - Sans `draft_id` : liste les brouillons en attente (id, destinataire, objet, date).
+      C'est ainsi qu'on RETROUVE un brouillon déposé lors d'une session précédente.
+    - Avec `draft_id` : rend le brouillon complet (destinataire, objet, corps), pour le
+      relire avant de le corriger avec mail_draft_update.
+
+    max_results : nombre de brouillons listés (défaut 10, max 25).
+    """
+    auth = await _authed()
+    if isinstance(auth, dict):
+        return auth
+    _, headers = auth
+
+    async with _client() as http:
+        if draft_id:
+            r = await http.get(f"{GMAIL}/drafts/{draft_id}", params={"format": "full"},
+                               headers=headers)
+            data = r.json()
+            if r.status_code != 200:
+                return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+            payload = dig(data, "message", "payload", default={}) or {}
+            out = _draft_summary(data, await _mailbox(http, headers))
+            out["body"] = _truncate(_extract_body(payload), DRAFT_BODY_LIMIT)
+            return out
+
+        max_results = max(1, min(int(max_results), 25))
+        r = await http.get(f"{GMAIL}/drafts", params={"maxResults": max_results},
+                           headers=headers)
+        data = r.json()
+        if r.status_code != 200:
+            return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+        # drafts.list only yields ids: the headers need one metadata fetch each
+        # (same shape as mail_search).
+        mailbox = await _mailbox(http, headers)
+        out = []
+        for ref in data.get("drafts") or []:
+            d = await http.get(f"{GMAIL}/drafts/{ref['id']}", params={"format": "metadata"},
+                               headers=headers)
+            if d.status_code != 200:
+                continue
+            out.append(_draft_summary(d.json(), mailbox))
+    return {"drafts": out}
+
+
+@mcp.tool()
+async def mail_draft_update(draft_id: str, to: str | None = None, subject: str | None = None,
+                            body: str | None = None) -> dict:
+    """Corrige un BROUILLON existant — toujours pas d'envoi, et rien n'est supprimé.
+
+    Seuls les champs fournis changent : le reste du brouillon (destinataire, objet,
+    corps, rattachement au fil) est conservé tel quel. Pour retrouver le `draft_id`
+    ou relire ce qu'il contient avant de corriger, passer par mail_drafts.
+
+    draft_id : l'id du brouillon (rendu par mail_draft ou mail_drafts).
+    to : nouveau(x) destinataire(s), séparés par des virgules.
+    subject : nouvel objet.
+    body : nouveau corps, texte brut (REMPLACE l'ancien, ne s'y ajoute pas).
+    """
+    if to is None and subject is None and body is None:
+        return {"error": "rien à modifier : aucun champ fourni."}
+    auth = await _authed()
+    if isinstance(auth, dict):
+        return auth
+    _, headers = auth
+
+    async with _client() as http:
+        # drafts.update REPLACES the whole draft: whatever is not re-sent is lost.
+        # So read the current one first and merge - in particular threadId, without
+        # which the amended draft would silently fall out of its thread.
+        r = await http.get(f"{GMAIL}/drafts/{draft_id}", params={"format": "full"},
+                           headers=headers)
+        data = r.json()
+        if r.status_code != 200:
+            return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+        payload = dig(data, "message", "payload", default={}) or {}
+        message: dict = {"raw": _build_mime(
+            # Untruncated on purpose: this text is written back to Gmail, so the
+            # display cap of mail_drafts must never reach it.
+            to if to is not None else (_header(payload, "To") or ""),
+            subject if subject is not None else (_header(payload, "Subject") or ""),
+            body if body is not None else _extract_body(payload),
+            in_reply_to=_header(payload, "In-Reply-To"),
+            references=_header(payload, "References"),
+        )}
+        thread_id = dig(data, "message", "threadId")
+        if thread_id:
+            message["threadId"] = thread_id
+        r = await http.put(f"{GMAIL}/drafts/{draft_id}", json={"message": message},
+                           headers=headers)
+        data = r.json()
+        if r.status_code != 200:
+            return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+        mailbox = await _mailbox(http, headers)
+    return {"draft_id": data.get("id") or draft_id,
+            # Reminted by the amendment: any link handed out earlier is now stale.
+            "link": _draft_link(mailbox, dig(data, "message", "id")),
+            "status": "brouillon corrigé dans Gmail — à relire et envoyer par l'utilisateur"}
 
 
 # --------------------------------------------------------------------------

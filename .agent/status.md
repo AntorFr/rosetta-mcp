@@ -1,6 +1,6 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-07-21
+> MàJ : 2026-07-28
 
 **État :** **v0.1.0 EN PROD** sur `https://rosetta.mcp.berard.me` (tantive, chart
 `rosetta-mcp` 0.1.0, image GHCR multi-arch). Hub MCP modulaire : addons `maps` +
@@ -41,7 +41,29 @@ MIME de Gmail (les expéditeurs mettent souvent `application/octet-stream` + un 
 pypdf). Sniff du magic `%PDF-` sur les octets → un PDF mal étiqueté est désormais
 transcrit. Prouvé bout-en-bout sur un vrai PDF. 29 tests.
 
+**v0.4.0 — le brouillon devient modifiable (2026-07-28)** : Alfred savait déposer un
+brouillon mais plus jamais le retrouver ni le corriger. Surface 7→9 outils (canari
+`test_no_send_tool_exists` mis à jour) : `mail_drafts` (liste les brouillons en attente,
+ou en relit un en entier — c'est ce qui permet de retrouver un brouillon d'une session
+précédente) et `mail_draft_update` (sémantique PATCH : seuls les champs fournis
+changent). **Aucun nouveau scope** — `gmail.compose`, déjà accordé, couvre
+drafts.list/get/update : pas de ré-enrôlement. Toujours ni envoi ni suppression.
+Piège traité : `drafts.update` est un PUT qui REMPLACE le brouillon → on relit et on
+refusionne d'abord, sinon le `threadId` saute et le brouillon se détache de son fil.
+Les 3 outils rendent un `link` vers le brouillon dans Gmail — l'URL porte l'id du
+MESSAGE (hex), pas le `draft_id` (`r-84…`), et le compte est adressé par son adresse
+(`/mail/u/<email>/`) pour ne pas dépendre de l'ordre des comptes du navigateur.
+34 tests.
+
 **Prochaines étapes :**
+- [ ] Déployer 0.4.0 : tag v0.4.0 → image GHCR → bump tag k8s → rollout tantive,
+      puis e2e réel (déposer un brouillon, le corriger, cliquer le lien) — exige un
+      token humain, donc à faire par l'Alfred du pod
+- [ ] ⚠️ **Hook `google_guard.py` d'Alfred PÉRIMÉ** (repo Alfred, cerveau) : il garde
+      des noms workspace-mcp (`manage_event`, `draft_gmail_message`) qui n'existent
+      plus. Conséquence RÉELLE : `calendar_update` ne matche plus `CAL_WRITE_TOOLS`
+      → le bouclier 🛡 PWA est contourné en headless. À réécrire sur la surface
+      rosetta (`mail_*` / `calendar_*`), avec les 2 nouveaux outils brouillon
 - [x] Déployé 0.3.0 (2026-07-21) : tag v0.3.0 → image GHCR multi-arch → bump tag
       k8s (0.2.4→0.3.0, chart inchangé) → rollout tantive. Vérifié DANS le pod :
       pypdf 6.14.2, 7 outils dont mail_attachment, /health 200. Reste l'e2e Gmail

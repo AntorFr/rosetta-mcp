@@ -29,6 +29,7 @@ def enrolled(data_dir):
         "sub": "sebastien", "refresh_token": "rt-123", "scopes": [], "enrolled_at": 0,
     }))
     google._token_cache.clear()
+    google._mailbox_cache.clear()
     current_claims.set({"sub": "sebastien"})
     return data_dir
 
@@ -86,16 +87,34 @@ def test_mail_draft_builds_reply_mime(enrolled, monkeypatch):
             return httpx.Response(200, json={"messages": [
                 {"payload": {"headers": [{"name": "Message-ID", "value": "<orig@x>"}]}},
             ]})
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json={"emailAddress": "moi@antor.fr"})
         captured.update(json.loads(request.read()))
-        return httpx.Response(200, json={"id": "d1"})
+        return httpx.Response(200, json={"id": "d1", "message": {"id": "19faa841267fcac6"}})
 
     monkeypatch.setattr(google, "_transport", mock(handler))
     out = run(google.mail_draft("x@y.z", "Re: Résa", "Bien reçu.", thread_id="t1"))
     assert out["draft_id"] == "d1"
+    # The web link carries the MESSAGE id (hex), never the draft id.
+    assert out["link"] == "https://mail.google.com/mail/u/moi@antor.fr/#drafts/19faa841267fcac6"
     assert captured["message"]["threadId"] == "t1"
     raw = base64.urlsafe_b64decode(captured["message"]["raw"]).decode()
     assert "To: x@y.z" in raw and "In-Reply-To: <orig@x>" in raw
     assert "Re: =?utf-8?q?R=C3=A9sa?=" in raw or "Re: Résa" in raw
+
+
+def test_draft_link_falls_back_to_first_account(enrolled, monkeypatch):
+    """An unreadable profile must still yield a usable link, not crash the draft."""
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(403, json={"error": {"message": "nope"}})
+        return httpx.Response(200, json={"id": "d1", "message": {"id": "abc123"}})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_draft("x@y.z", "Objet", "Corps."))
+    assert out["link"] == "https://mail.google.com/mail/u/0/#drafts/abc123"
 
 
 def test_draft_keeps_thread_id_even_if_metadata_fetch_fails(enrolled, monkeypatch):
@@ -107,8 +126,10 @@ def test_draft_keeps_thread_id_even_if_metadata_fetch_fails(enrolled, monkeypatc
             return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
         if "/threads/" in request.url.path:
             return httpx.Response(500, json={})
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json={"emailAddress": "moi@antor.fr"})
         captured.update(json.loads(request.read()))
-        return httpx.Response(200, json={"id": "d2"})
+        return httpx.Response(200, json={"id": "d2", "message": {"id": "m2"}})
 
     monkeypatch.setattr(google, "_transport", mock(handler))
     out = run(google.mail_draft("x@y.z", "Re: Résa", "Corps.", thread_id="t1"))
@@ -116,6 +137,87 @@ def test_draft_keeps_thread_id_even_if_metadata_fetch_fails(enrolled, monkeypatc
     assert captured["message"]["threadId"] == "t1"
     raw = base64.urlsafe_b64decode(captured["message"]["raw"]).decode()
     assert "In-Reply-To" not in raw  # headers skipped, attachment preserved
+
+
+def _draft_resource(to="x@y.z", subject="Re: Résa", body="Corps initial.",
+                    thread_id="t1", extra_headers=()):
+    """A drafts.get format=full resource, as Gmail returns it."""
+    headers = [{"name": "To", "value": to}, {"name": "Subject", "value": subject},
+               {"name": "Date", "value": "Mon, 27 Jul 2026"}]
+    headers += [{"name": n, "value": v} for n, v in extra_headers]
+    return {"id": "d1", "message": {
+        "id": "19faa841267fcac6", "threadId": thread_id,
+        "payload": {"mimeType": "text/plain", "headers": headers,
+                    "body": {"data": base64.urlsafe_b64encode(body.encode()).decode()}},
+    }}
+
+
+def test_mail_drafts_lists_and_reads(enrolled, monkeypatch):
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json={"emailAddress": "moi@antor.fr"})
+        if request.url.path.endswith("/drafts"):
+            return httpx.Response(200, json={"drafts": [{"id": "d1"}]})
+        return httpx.Response(200, json=_draft_resource())
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    listed = run(google.mail_drafts())
+    assert listed["drafts"] == [{
+        "draft_id": "d1", "thread_id": "t1", "to": "x@y.z", "subject": "Re: Résa",
+        "date": "Mon, 27 Jul 2026",
+        "link": "https://mail.google.com/mail/u/moi@antor.fr/#drafts/19faa841267fcac6",
+    }]
+    one = run(google.mail_drafts(draft_id="d1"))
+    assert one["body"] == "Corps initial." and one["subject"] == "Re: Résa"
+
+
+def test_mail_draft_update_merges_and_keeps_thread(enrolled, monkeypatch):
+    """PUT replaces the whole draft: unspecified fields and the thread attachment
+    must be carried over from the current draft, not dropped."""
+    captured = {}
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if request.url.path.endswith("/profile"):
+            return httpx.Response(200, json={"emailAddress": "moi@antor.fr"})
+        if request.method == "PUT":
+            captured.update(json.loads(request.read()))
+            return httpx.Response(200, json={"id": "d1", "message": {"id": "19faa842188cd63c"}})
+        return httpx.Response(200, json=_draft_resource(
+            extra_headers=[("In-Reply-To", "<orig@x>"), ("References", "<a@x> <orig@x>")]))
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_draft_update("d1", body="Corps corrigé."))
+    assert out["draft_id"] == "d1"
+    # Amending remints the message id: the link must point at the NEW one.
+    assert out["link"] == "https://mail.google.com/mail/u/moi@antor.fr/#drafts/19faa842188cd63c"
+    assert captured["message"]["threadId"] == "t1"  # never silently detached
+    raw = base64.urlsafe_b64decode(captured["message"]["raw"]).decode()
+    assert "Corps corrigé." in raw and "Corps initial." not in raw
+    assert "To: x@y.z" in raw                       # untouched field preserved
+    assert "In-Reply-To: <orig@x>" in raw and "References: <a@x> <orig@x>" in raw
+
+
+def test_mail_draft_update_rejects_empty_patch(enrolled, monkeypatch):
+    def handler(request):  # must never be reached
+        raise AssertionError("no HTTP call expected for an empty patch")
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    assert "error" in run(google.mail_draft_update("d1"))
+
+
+def test_mail_draft_update_reports_unknown_draft(enrolled, monkeypatch):
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        return httpx.Response(404, json={"error": {"message": "Requested entity was not found."}})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_draft_update("nope", body="x"))
+    assert "not found" in out["error"]
 
 
 def test_store_keyed_on_preferred_username(enrolled, monkeypatch):
@@ -135,7 +237,8 @@ def test_store_keyed_on_preferred_username(enrolled, monkeypatch):
 def test_no_send_tool_exists():
     tool_names = {t.name for t in run(google.mcp.list_tools())}
     assert tool_names == {
-        "mail_search", "mail_thread", "mail_attachment", "mail_draft",
+        "mail_search", "mail_thread", "mail_attachment",
+        "mail_draft", "mail_drafts", "mail_draft_update",
         "calendar_events", "calendar_create", "calendar_update",
     }
     # The point of pinning the set: no send, no delete, no label tool ever slips in.
