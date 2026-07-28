@@ -55,8 +55,9 @@ guarded by the ingress SSO (forwardAuth) instead of the hub JWT.
 Bundled addons: `maps` (Google Routes / Places New / Weather - needs
 `GOOGLE_MAPS_API_KEY`), `transit` (SNCF + IDFM Navitia - needs `SNCF_API_KEY`,
 `IDFM_API_KEY`), `google` (user-data class: Gmail search / read / attachment +
-**drafts only** - list, read, create and amend, each answering with a `link` straight
-to the draft in the Gmail web UI - plus
+**drafts only** - list, read, create and amend, each answering with a stable `link`
+straight to the draft in the Gmail web UI (`ROSETTA_GMAIL_ACCOUNT` overrides the account
+index when the mailbox is not the browser's first) - plus
 Calendar list/create/update - deliberately **no send, no delete, no labels**:
 the guard is the tool surface itself. Attachments come back transcribed to text
 (PDF via pypdf) for reading, or as raw base64 (`raw=True`) for native storage. One-time per-user enrolment at
@@ -96,6 +97,7 @@ answers with a 307 redirect.
 | `ROSETTA_ADDONS` | all discovered | comma-separated allowlist |
 | `GOOGLE_MAPS_API_KEY` | - | `maps` addon |
 | `SNCF_API_KEY`, `IDFM_API_KEY` | - | `transit` addon |
+| `ROSETTA_GMAIL_ACCOUNT` | `0` | `google` addon: account segment of the draft web links (`/mail/u/<this>/`) |
 
 ## Development
 

@@ -69,7 +69,25 @@ métadonnées de la distribution → pyproject est la source unique, la dérive 
 structurellement impossible. Un venv de dev installé une fois peut retarder ; l'image,
 reconstruite à chaque release, est toujours exacte.
 
+**v0.4.2 — le lien brouillon corrigé par l'e2e réel (2026-07-29)** : les deux
+hypothèses de 0.4.0 étaient fausses, tranchées par l'essai en vrai, pas par le
+raisonnement. (1) Le segment de compte doit être l'INDEX `/mail/u/0/` — la forme par
+adresse `/mail/u/<email>/`, plausible et jamais vérifiée, rend un 404 ; désormais
+surchargeable par `ROSETTA_GMAIL_ACCOUNT` si la boîte n'est pas le premier compte du
+navigateur. (2) Le fragment doit être le **thread_id**, pas l'id de message : Gmail
+remint ce dernier à chaque correction, donc tout lien déjà donné mourait. Le bug était
+masqué sur un brouillon neuf, à qui Gmail donne un id de message ÉGAL au thread_id —
+les deux constructions étaient indistinguables tant qu'on ne corrigeait pas. Du coup
+`mail_draft_update` rend maintenant EXACTEMENT le même lien que le dépôt (bâti sur le
+thread lu AVANT l'écriture, la réponse du PUT ne portant qu'un id transitoire qui
+n'atterrit que sur le dossier #drafts). Appel `/profile` et son cache supprimés au
+passage : plus rien à résoudre côté serveur. 34 tests.
+
 **Prochaines étapes :**
+- [ ] Alfred : le contournement posé dans la skill `correspondance` (réécrire le
+      segment en /u/0/, ignorer le lien de l'update) devient inutile en 0.4.2 —
+      et sa 2e moitié devient FAUSSE, le lien de l'update étant désormais le bon.
+      À retirer côté cerveau (Alfred), pas ici
 - [ ] Porter les addons sur `mcp` 2.x et lever le plafond `<2` (chantier à part :
       `mcp.server.fastmcp` a bougé, tous les addons passent par `_common`)
 - [ ] Déployer 0.4.0 : tag v0.4.0 → image GHCR → bump tag k8s → rollout tantive,

@@ -29,7 +29,6 @@ def enrolled(data_dir):
         "sub": "sebastien", "refresh_token": "rt-123", "scopes": [], "enrolled_at": 0,
     }))
     google._token_cache.clear()
-    google._mailbox_cache.clear()
     current_claims.set({"sub": "sebastien"})
     return data_dir
 
@@ -87,34 +86,33 @@ def test_mail_draft_builds_reply_mime(enrolled, monkeypatch):
             return httpx.Response(200, json={"messages": [
                 {"payload": {"headers": [{"name": "Message-ID", "value": "<orig@x>"}]}},
             ]})
-        if request.url.path.endswith("/profile"):
-            return httpx.Response(200, json={"emailAddress": "moi@antor.fr"})
         captured.update(json.loads(request.read()))
-        return httpx.Response(200, json={"id": "d1", "message": {"id": "19faa841267fcac6"}})
+        return httpx.Response(200, json={"id": "d1", "message": {
+            "id": "19faa841267fcac6", "threadId": "19faa000aaaa1111"}})
 
     monkeypatch.setattr(google, "_transport", mock(handler))
     out = run(google.mail_draft("x@y.z", "Re: Résa", "Bien reçu.", thread_id="t1"))
     assert out["draft_id"] == "d1"
-    # The web link carries the MESSAGE id (hex), never the draft id.
-    assert out["link"] == "https://mail.google.com/mail/u/moi@antor.fr/#drafts/19faa841267fcac6"
+    # Account INDEX (the address form 404s), and the THREAD id (the message id is
+    # reminted on every amendment). Verified against the real Gmail UI.
+    assert out["link"] == "https://mail.google.com/mail/u/0/#drafts/19faa000aaaa1111"
     assert captured["message"]["threadId"] == "t1"
     raw = base64.urlsafe_b64decode(captured["message"]["raw"]).decode()
     assert "To: x@y.z" in raw and "In-Reply-To: <orig@x>" in raw
     assert "Re: =?utf-8?q?R=C3=A9sa?=" in raw or "Re: Résa" in raw
 
 
-def test_draft_link_falls_back_to_first_account(enrolled, monkeypatch):
-    """An unreadable profile must still yield a usable link, not crash the draft."""
+def test_draft_link_account_is_overridable(enrolled, monkeypatch):
+    """Index 0 is the browser's first account; a different mailbox needs the override."""
     def handler(request):
         if request.url.host == "oauth2.googleapis.com":
             return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
-        if request.url.path.endswith("/profile"):
-            return httpx.Response(403, json={"error": {"message": "nope"}})
-        return httpx.Response(200, json={"id": "d1", "message": {"id": "abc123"}})
+        return httpx.Response(200, json={"id": "d1", "message": {"threadId": "abc123"}})
 
     monkeypatch.setattr(google, "_transport", mock(handler))
+    monkeypatch.setenv("ROSETTA_GMAIL_ACCOUNT", "2")
     out = run(google.mail_draft("x@y.z", "Objet", "Corps."))
-    assert out["link"] == "https://mail.google.com/mail/u/0/#drafts/abc123"
+    assert out["link"] == "https://mail.google.com/mail/u/2/#drafts/abc123"
 
 
 def test_draft_keeps_thread_id_even_if_metadata_fetch_fails(enrolled, monkeypatch):
@@ -126,8 +124,6 @@ def test_draft_keeps_thread_id_even_if_metadata_fetch_fails(enrolled, monkeypatc
             return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
         if "/threads/" in request.url.path:
             return httpx.Response(500, json={})
-        if request.url.path.endswith("/profile"):
-            return httpx.Response(200, json={"emailAddress": "moi@antor.fr"})
         captured.update(json.loads(request.read()))
         return httpx.Response(200, json={"id": "d2", "message": {"id": "m2"}})
 
@@ -156,8 +152,6 @@ def test_mail_drafts_lists_and_reads(enrolled, monkeypatch):
     def handler(request):
         if request.url.host == "oauth2.googleapis.com":
             return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
-        if request.url.path.endswith("/profile"):
-            return httpx.Response(200, json={"emailAddress": "moi@antor.fr"})
         if request.url.path.endswith("/drafts"):
             return httpx.Response(200, json={"drafts": [{"id": "d1"}]})
         return httpx.Response(200, json=_draft_resource())
@@ -167,7 +161,7 @@ def test_mail_drafts_lists_and_reads(enrolled, monkeypatch):
     assert listed["drafts"] == [{
         "draft_id": "d1", "thread_id": "t1", "to": "x@y.z", "subject": "Re: Résa",
         "date": "Mon, 27 Jul 2026",
-        "link": "https://mail.google.com/mail/u/moi@antor.fr/#drafts/19faa841267fcac6",
+        "link": "https://mail.google.com/mail/u/0/#drafts/t1",
     }]
     one = run(google.mail_drafts(draft_id="d1"))
     assert one["body"] == "Corps initial." and one["subject"] == "Re: Résa"
@@ -181,19 +175,20 @@ def test_mail_draft_update_merges_and_keeps_thread(enrolled, monkeypatch):
     def handler(request):
         if request.url.host == "oauth2.googleapis.com":
             return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
-        if request.url.path.endswith("/profile"):
-            return httpx.Response(200, json={"emailAddress": "moi@antor.fr"})
         if request.method == "PUT":
             captured.update(json.loads(request.read()))
-            return httpx.Response(200, json={"id": "d1", "message": {"id": "19faa842188cd63c"}})
+            # Gmail hands back a transient message id here: it only lands on the
+            # #drafts folder, so the link must NOT be built from this response.
+            return httpx.Response(200, json={"id": "d1", "message": {"id": "ffff0000transient"}})
         return httpx.Response(200, json=_draft_resource(
             extra_headers=[("In-Reply-To", "<orig@x>"), ("References", "<a@x> <orig@x>")]))
 
     monkeypatch.setattr(google, "_transport", mock(handler))
     out = run(google.mail_draft_update("d1", body="Corps corrigé."))
     assert out["draft_id"] == "d1"
-    # Amending remints the message id: the link must point at the NEW one.
-    assert out["link"] == "https://mail.google.com/mail/u/moi@antor.fr/#drafts/19faa842188cd63c"
+    # Same stable link as the deposit returned: built on the thread, not on the
+    # message id, so a link handed out before the amendment still works.
+    assert out["link"] == "https://mail.google.com/mail/u/0/#drafts/t1"
     assert captured["message"]["threadId"] == "t1"  # never silently detached
     raw = base64.urlsafe_b64decode(captured["message"]["raw"]).decode()
     assert "Corps corrigé." in raw and "Corps initial." not in raw

@@ -230,38 +230,24 @@ def _list_attachments(payload: dict) -> list[dict]:
     return found
 
 
-# Mailbox address cache: sub -> address (or "0"). Only used to build web links.
-_mailbox_cache: dict[str, str] = {}
+def _draft_link(thread_id: str | None) -> str | None:
+    """Deep link to a draft in the Gmail web UI. Verified against the real UI.
 
+    Two things were wrong in 0.4.x and are settled here by testing, not reasoning:
 
-async def _mailbox(http, headers: dict) -> str:
-    """The account segment of a Gmail web URL for the calling user.
+    - The ACCOUNT segment must be the index (/mail/u/0/). The address form
+      (/mail/u/someone@example.com/) reads plausibly and 404s. Overridable via
+      ROSETTA_GMAIL_ACCOUNT for a mailbox that is not the browser's first account.
+    - The FRAGMENT must be the THREAD id. The draft's message id also opens the
+      draft, but Gmail remints it on every amendment, so any link handed out
+      earlier goes dead. The thread id survives edits. A brand-new draft hides the
+      bug: Gmail gives its first message an id equal to the thread id, so building
+      on either looked identical until the draft was amended.
 
-    Gmail addresses a mailbox by its index (/mail/u/0/) OR by its address
-    (/mail/u/someone@example.com/), the latter resolving to the right index
-    whichever accounts are signed in - which is what we want, since we cannot know
-    the browser's account order. Falls back to index 0 if the profile is
-    unreadable. Cached: the address never changes for a given subject.
+    Never the draft id (`r-84…`) - that one opens nothing at all.
     """
-    sub = _current_sub() or ""
-    if sub not in _mailbox_cache:
-        try:
-            r = await http.get(f"{GMAIL}/profile", headers=headers)
-            address = r.json().get("emailAddress") if r.status_code == 200 else None
-        except Exception:
-            address = None
-        _mailbox_cache[sub] = address or "0"
-    return _mailbox_cache[sub]
-
-
-def _draft_link(mailbox: str, message_id: str | None) -> str | None:
-    """Deep link to a draft in the Gmail web UI.
-
-    The fragment carries the DRAFT'S MESSAGE id (hex, e.g. 19faa841267fcac6), not
-    the draft id (`r-84…`) - opening the latter yields nothing. Note the message id
-    is reminted on every amendment, so a link taken before an update goes stale.
-    """
-    return f"{GMAIL_WEB}/u/{mailbox}/#drafts/{message_id}" if message_id else None
+    account = os.environ.get("ROSETTA_GMAIL_ACCOUNT", "0")
+    return f"{GMAIL_WEB}/u/{account}/#drafts/{thread_id}" if thread_id else None
 
 
 def _build_mime(to: str, subject: str, body: str, in_reply_to: str | None = None,
@@ -277,16 +263,17 @@ def _build_mime(to: str, subject: str, body: str, in_reply_to: str | None = None
     return base64.urlsafe_b64encode(mime.as_bytes()).decode()
 
 
-def _draft_summary(draft: dict, mailbox: str) -> dict:
+def _draft_summary(draft: dict) -> dict:
     """id, headers and web link of a draft, from a format=metadata (or full) drafts.get."""
     payload = dig(draft, "message", "payload", default={}) or {}
+    thread_id = dig(draft, "message", "threadId")
     return {
         "draft_id": draft.get("id"),
-        "thread_id": dig(draft, "message", "threadId"),
+        "thread_id": thread_id,
         "to": _header(payload, "To"),
         "subject": _header(payload, "Subject"),
         "date": _header(payload, "Date"),
-        "link": _draft_link(mailbox, dig(draft, "message", "id")),
+        "link": _draft_link(thread_id),
     }
 
 
@@ -490,11 +477,10 @@ async def mail_draft(to: str, subject: str, body: str, thread_id: str | None = N
         message["raw"] = _build_mime(to, subject, body, in_reply_to=last_mid)
         r = await http.post(f"{GMAIL}/drafts", json={"message": message}, headers=headers)
         data = r.json()
-        if r.status_code != 200:
-            return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
-        mailbox = await _mailbox(http, headers)
+    if r.status_code != 200:
+        return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
     return {"draft_id": data.get("id"),
-            "link": _draft_link(mailbox, dig(data, "message", "id")),
+            "link": _draft_link(dig(data, "message", "threadId")),
             "status": "brouillon déposé dans Gmail — à relire et envoyer par l'utilisateur"}
 
 
@@ -522,7 +508,7 @@ async def mail_drafts(draft_id: str | None = None, max_results: int = 10) -> dic
             if r.status_code != 200:
                 return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
             payload = dig(data, "message", "payload", default={}) or {}
-            out = _draft_summary(data, await _mailbox(http, headers))
+            out = _draft_summary(data)
             out["body"] = _truncate(_extract_body(payload), DRAFT_BODY_LIMIT)
             return out
 
@@ -534,14 +520,13 @@ async def mail_drafts(draft_id: str | None = None, max_results: int = 10) -> dic
             return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
         # drafts.list only yields ids: the headers need one metadata fetch each
         # (same shape as mail_search).
-        mailbox = await _mailbox(http, headers)
         out = []
         for ref in data.get("drafts") or []:
             d = await http.get(f"{GMAIL}/drafts/{ref['id']}", params={"format": "metadata"},
                                headers=headers)
             if d.status_code != 200:
                 continue
-            out.append(_draft_summary(d.json(), mailbox))
+            out.append(_draft_summary(d.json()))
     return {"drafts": out}
 
 
@@ -558,6 +543,9 @@ async def mail_draft_update(draft_id: str, to: str | None = None, subject: str |
     to : nouveau(x) destinataire(s), séparés par des virgules.
     subject : nouvel objet.
     body : nouveau corps, texte brut (REMPLACE l'ancien, ne s'y ajoute pas).
+
+    Rend le MÊME `link` que le dépôt : il est bâti sur le fil, qui ne bouge pas.
+    Un lien donné à l'utilisateur avant une correction reste donc valable.
     """
     if to is None and subject is None and body is None:
         return {"error": "rien à modifier : aucun champ fourni."}
@@ -591,12 +579,13 @@ async def mail_draft_update(draft_id: str, to: str | None = None, subject: str |
         r = await http.put(f"{GMAIL}/drafts/{draft_id}", json={"message": message},
                            headers=headers)
         data = r.json()
-        if r.status_code != 200:
-            return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
-        mailbox = await _mailbox(http, headers)
+    if r.status_code != 200:
+        return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
     return {"draft_id": data.get("id") or draft_id,
-            # Reminted by the amendment: any link handed out earlier is now stale.
-            "link": _draft_link(mailbox, dig(data, "message", "id")),
+            # The thread id read BEFORE the write, not anything the PUT hands back:
+            # its response carries a transient message id that only lands on the
+            # #drafts folder. This link is the very one the deposit returned.
+            "link": _draft_link(thread_id),
             "status": "brouillon corrigé dans Gmail — à relire et envoyer par l'utilisateur"}
 
 
