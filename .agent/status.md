@@ -61,6 +61,14 @@ addons via `_common`. La CI de v0.4.0 a cassé à la collecte ; sans ce gate, l'
 publiée aurait crashé au démarrage. Plafonné à `mcp>=1.2,<2` (CI → 1.29.0, module
 vérifié présent dans la wheel). Monter en 2.x = porter les addons, chantier à part.
 
+**v0.4.1 (2026-07-28)** : `/health` mentait — `__version__` était écrit en dur dans
+`__init__.py`, jamais retouché depuis 0.2.4, donc la sonde annonçait 0.2.4 en servant
+0.3.0, 0.3.1 puis 0.4.0. Trouvé en vérifiant le déploiement de 0.4.0 (le pod, lui,
+tournait bien la bonne version : 9 outils google, mcp 1.29.0). Désormais dérivé des
+métadonnées de la distribution → pyproject est la source unique, la dérive est
+structurellement impossible. Un venv de dev installé une fois peut retarder ; l'image,
+reconstruite à chaque release, est toujours exacte.
+
 **Prochaines étapes :**
 - [ ] Porter les addons sur `mcp` 2.x et lever le plafond `<2` (chantier à part :
       `mcp.server.fastmcp` a bougé, tous les addons passent par `_common`)
