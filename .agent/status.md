@@ -55,7 +55,15 @@ MESSAGE (hex), pas le `draft_id` (`r-84…`), et le compte est adressé par son 
 (`/mail/u/<email>/`) pour ne pas dépendre de l'ordre des comptes du navigateur.
 34 tests.
 
+**Dérive amont rattrapée au passage (2026-07-28)** : `mcp` 2.0.0 est sorti et le pin
+`mcp>=1.2` l'attrapait — la 2.x déplace `mcp.server.fastmcp`, importé par *tous* les
+addons via `_common`. La CI de v0.4.0 a cassé à la collecte ; sans ce gate, l'image
+publiée aurait crashé au démarrage. Plafonné à `mcp>=1.2,<2` (CI → 1.29.0, module
+vérifié présent dans la wheel). Monter en 2.x = porter les addons, chantier à part.
+
 **Prochaines étapes :**
+- [ ] Porter les addons sur `mcp` 2.x et lever le plafond `<2` (chantier à part :
+      `mcp.server.fastmcp` a bougé, tous les addons passent par `_common`)
 - [ ] Déployer 0.4.0 : tag v0.4.0 → image GHCR → bump tag k8s → rollout tantive,
       puis e2e réel (déposer un brouillon, le corriger, cliquer le lien) — exige un
       token humain, donc à faire par l'Alfred du pod
