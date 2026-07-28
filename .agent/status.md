@@ -83,6 +83,20 @@ thread lu AVANT l'écriture, la réponse du PUT ne portant qu'un id transitoire 
 n'atterrit que sur le dossier #drafts). Appel `/profile` et son cache supprimés au
 passage : plus rien à résoudre côté serveur. 34 tests.
 
+**v0.5.0 — répondre dans un fil devient un seul paramètre (2026-07-29)** :
+`mail_draft` prend un `reply_to_message_id` ; le serveur en dérive le `thread_id`, le
+destinataire et l'objet (« Re: … », sans doubler un « Re: » déjà là). Le rattachement
+au fil existait depuis toujours via `thread_id` — ce qui manquait, c'était le
+**destinataire** : aucun outil n'exposait `Reply-To`, donc Alfred répondait au `From`,
+qui est une adresse d'envoi automatique chez toutes les plateformes. Le brouillon
+atterrissait dans le bon fil, bien chaîné, adressé à un `no-reply` — défaut invisible
+jusqu'à l'envoi. `Reply-To` l'emporte désormais sur `From`, `References` porte la
+chaîne du parent + le parent (le fil tient aussi chez le destinataire, pas seulement
+dans notre Gmail), et l'outil rend les `to`/`subject` RÉELLEMENT utilisés pour qu'ils
+soient vérifiables. `mail_thread` expose `reply_to` quand il existe, et l'`id` de
+chaque message (c'est lui qu'on repasse en `reply_to_message_id`). Signature de
+`mail_draft` : `body` d'abord, `to`/`subject` devenus optionnels. 37 tests.
+
 **Prochaines étapes :**
 - [ ] Alfred : le contournement posé dans la skill `correspondance` (réécrire le
       segment en /u/0/, ignorer le lien de l'update) devient inutile en 0.4.2 —

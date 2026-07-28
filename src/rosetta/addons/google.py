@@ -348,12 +348,19 @@ async def mail_thread(thread_id: str) -> dict:
     for msg in data.get("messages") or []:
         payload = msg.get("payload") or {}
         subject = subject or _header(payload, "Subject")
-        messages.append({
+        entry = {
+            "id": msg.get("id"),          # feeds mail_draft(reply_to_message_id=…)
             "from": _header(payload, "From"),
             "to": _header(payload, "To"),
             "date": _header(payload, "Date"),
             "body": _truncate(_extract_body(payload) or msg.get("snippet", "")),
-        })
+        }
+        # Only when the sender asked to be answered elsewhere - the case that makes
+        # a reply to `from` land nowhere. Free: format=full already carried it.
+        reply_to = _header(payload, "Reply-To")
+        if reply_to:
+            entry["reply_to"] = reply_to
+        messages.append(entry)
     return {"thread_id": thread_id, "subject": subject, "messages": messages}
 
 
@@ -441,45 +448,89 @@ async def mail_attachment(message_id: str, attachment_id: str | None = None,
 
 
 @mcp.tool()
-async def mail_draft(to: str, subject: str, body: str, thread_id: str | None = None) -> dict:
+async def mail_draft(body: str, to: str | None = None, subject: str | None = None,
+                     thread_id: str | None = None,
+                     reply_to_message_id: str | None = None) -> dict:
     """Dépose un BROUILLON dans Gmail — jamais d'envoi (c'est l'utilisateur qui clique).
 
-    to : destinataire(s), séparés par des virgules.
-    subject : objet (mettre « Re: … » pour une réponse).
-    body : corps du message, texte brut.
-    thread_id : optionnel, pour rattacher le brouillon à un fil existant.
+    POUR RÉPONDRE À UN MAIL, ne renseigner que `reply_to_message_id` et `body` : le
+    serveur dérive le fil, le destinataire et l'objet. C'est la voie à préférer, et
+    pas seulement par confort — elle évite d'écrire au `From` quand l'expéditeur a
+    posé un `Reply-To` (les plateformes envoient depuis une adresse automatique).
+    Un brouillon adressé au mauvais destinataire a l'air parfaitement correct : on ne
+    s'en aperçoit qu'une fois envoyé.
 
-    Rend `draft_id` (pour corriger ensuite via mail_draft_update) et `link`, l'URL
-    du brouillon dans Gmail — à donner telle quelle à l'utilisateur pour qu'il
-    l'ouvre, le relise et l'envoie.
+    body : corps du message, texte brut.
+    to : destinataire(s), séparés par des virgules. Requis SAUF en réponse ; fourni
+         en réponse, il écrase le destinataire dérivé.
+    subject : objet. En réponse, dérivé du message parent (« Re: … ») s'il est omis.
+    thread_id : rattache le brouillon à un fil (dérivé en réponse, inutile à donner).
+    reply_to_message_id : l'id du message auquel on répond (rendu par mail_search).
+
+    Rend `draft_id` (pour corriger ensuite via mail_draft_update), `to` et `subject`
+    RÉELLEMENT utilisés — à vérifier avant d'annoncer quoi que ce soit — et `link`,
+    l'URL du brouillon dans Gmail, à donner telle quelle à l'utilisateur.
     """
     auth = await _authed()
     if isinstance(auth, dict):
         return auth
     _, headers = auth
     message: dict = {}
-    last_mid = None
+    in_reply_to = references = None
+
     async with _client() as http:
+        if reply_to_message_id:
+            r = await http.get(
+                f"{GMAIL}/messages/{reply_to_message_id}",
+                params={"format": "metadata", "metadataHeaders":
+                        ["Reply-To", "From", "Subject", "Message-ID", "References"]},
+                headers=headers,
+            )
+            data = r.json()
+            if r.status_code != 200:
+                return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+            parent = data.get("payload") or {}
+            thread_id = thread_id or data.get("threadId")
+            # Reply-To wins over From: a sender posting from a no-reply address uses
+            # it to say where to actually write back. Answering From lands in a void.
+            to = to or _header(parent, "Reply-To") or _header(parent, "From")
+            if subject is None:
+                parent_subject = (_header(parent, "Subject") or "").strip()
+                subject = (parent_subject if parent_subject.lower().startswith("re:")
+                           else f"Re: {parent_subject}".strip())
+            # Chain onto THIS message, and carry its References so the thread holds
+            # in the recipient's client too, not just in our Gmail.
+            in_reply_to = _header(parent, "Message-ID")
+            references = " ".join(x for x in (_header(parent, "References"), in_reply_to) if x)
+
+        if not to:
+            return {"error": "destinataire absent : fournir `to`, ou `reply_to_message_id` "
+                             "pour répondre à un message existant."}
+
         if thread_id:
             # Gmail nests a draft in a thread ONLY if threadId is set on the
             # draft's message RESOURCE - headers alone leave it orphaned. Set it
             # unconditionally; the metadata fetch below only serves the
             # In-Reply-To/References headers and stays best-effort.
             message["threadId"] = thread_id
-            r = await http.get(
-                f"{GMAIL}/threads/{thread_id}",
-                params={"format": "metadata", "metadataHeaders": ["Message-ID"]},
-                headers=headers,
-            )
-            if r.status_code == 200:
-                msgs = r.json().get("messages") or []
-                last_mid = _header((msgs[-1].get("payload") or {}), "Message-ID") if msgs else None
-        message["raw"] = _build_mime(to, subject, body, in_reply_to=last_mid)
+            if not in_reply_to:
+                # Thread given without a parent message: chain onto its last one.
+                r = await http.get(
+                    f"{GMAIL}/threads/{thread_id}",
+                    params={"format": "metadata", "metadataHeaders": ["Message-ID"]},
+                    headers=headers,
+                )
+                if r.status_code == 200:
+                    msgs = r.json().get("messages") or []
+                    in_reply_to = _header((msgs[-1].get("payload") or {}),
+                                          "Message-ID") if msgs else None
+        message["raw"] = _build_mime(to, subject or "", body,
+                                     in_reply_to=in_reply_to, references=references)
         r = await http.post(f"{GMAIL}/drafts", json={"message": message}, headers=headers)
         data = r.json()
     if r.status_code != 200:
         return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
-    return {"draft_id": data.get("id"),
+    return {"draft_id": data.get("id"), "to": to, "subject": subject or "",
             "link": _draft_link(dig(data, "message", "threadId")),
             "status": "brouillon déposé dans Gmail — à relire et envoyer par l'utilisateur"}
 

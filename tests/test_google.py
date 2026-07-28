@@ -91,7 +91,7 @@ def test_mail_draft_builds_reply_mime(enrolled, monkeypatch):
             "id": "19faa841267fcac6", "threadId": "19faa000aaaa1111"}})
 
     monkeypatch.setattr(google, "_transport", mock(handler))
-    out = run(google.mail_draft("x@y.z", "Re: Résa", "Bien reçu.", thread_id="t1"))
+    out = run(google.mail_draft("Bien reçu.", to="x@y.z", subject="Re: Résa", thread_id="t1"))
     assert out["draft_id"] == "d1"
     # Account INDEX (the address form 404s), and the THREAD id (the message id is
     # reminted on every amendment). Verified against the real Gmail UI.
@@ -111,7 +111,7 @@ def test_draft_link_account_is_overridable(enrolled, monkeypatch):
 
     monkeypatch.setattr(google, "_transport", mock(handler))
     monkeypatch.setenv("ROSETTA_GMAIL_ACCOUNT", "2")
-    out = run(google.mail_draft("x@y.z", "Objet", "Corps."))
+    out = run(google.mail_draft("Corps.", to="x@y.z", subject="Objet"))
     assert out["link"] == "https://mail.google.com/mail/u/2/#drafts/abc123"
 
 
@@ -128,11 +128,79 @@ def test_draft_keeps_thread_id_even_if_metadata_fetch_fails(enrolled, monkeypatc
         return httpx.Response(200, json={"id": "d2", "message": {"id": "m2"}})
 
     monkeypatch.setattr(google, "_transport", mock(handler))
-    out = run(google.mail_draft("x@y.z", "Re: Résa", "Corps.", thread_id="t1"))
+    out = run(google.mail_draft("Corps.", to="x@y.z", subject="Re: Résa", thread_id="t1"))
     assert out["draft_id"] == "d2"
     assert captured["message"]["threadId"] == "t1"
     raw = base64.urlsafe_b64decode(captured["message"]["raw"]).decode()
     assert "In-Reply-To" not in raw  # headers skipped, attachment preserved
+
+
+def _parent_message(headers, thread_id="t9"):
+    """A messages.get format=metadata resource for the message being replied to."""
+    return {"id": "m9", "threadId": thread_id,
+            "payload": {"headers": [{"name": n, "value": v} for n, v in headers]}}
+
+
+def test_reply_prefers_reply_to_over_from(enrolled, monkeypatch):
+    """The whole point: platforms send from a no-reply address and put the real one
+    in Reply-To. Answering From produces a draft that looks right and goes nowhere."""
+    captured = {}
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if "/messages/" in request.url.path:
+            return httpx.Response(200, json=_parent_message([
+                ("From", "no-reply@plateforme.fr"),
+                ("Reply-To", "contact@lekastor.fr"),
+                ("Subject", "Votre demande de devis"),
+                ("Message-ID", "<parent@x>"),
+                ("References", "<ancien@x>"),
+            ]))
+        captured.update(json.loads(request.read()))
+        return httpx.Response(200, json={"id": "d9", "message": {"threadId": "t9"}})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_draft("Merci, c'est noté.", reply_to_message_id="m9"))
+    assert out["to"] == "contact@lekastor.fr"        # NOT no-reply@plateforme.fr
+    assert out["subject"] == "Re: Votre demande de devis"
+    assert captured["message"]["threadId"] == "t9"   # thread derived, not asked for
+    raw = base64.urlsafe_b64decode(captured["message"]["raw"]).decode()
+    assert "In-Reply-To: <parent@x>" in raw
+    # References carries the parent's chain PLUS the parent itself.
+    assert "References: <ancien@x> <parent@x>" in raw
+
+
+def test_reply_derivation_is_overridable_and_avoids_re_re(enrolled, monkeypatch):
+    """An explicit `to` wins over the derived one, and an already-Re: subject is
+    not prefixed twice."""
+    captured = {}
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if "/messages/" in request.url.path:
+            return httpx.Response(200, json=_parent_message([
+                ("From", "a@b.c"), ("Subject", "Re: déjà une réponse"),
+                ("Message-ID", "<p@x>"),
+            ]))
+        captured.update(json.loads(request.read()))
+        return httpx.Response(200, json={"id": "d9", "message": {"threadId": "t9"}})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_draft("Corps.", to="autre@z.z", reply_to_message_id="m9"))
+    assert out["to"] == "autre@z.z"
+    assert out["subject"] == "Re: déjà une réponse"   # pas « Re: Re: … »
+
+
+def test_draft_without_recipient_is_refused(enrolled, monkeypatch):
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        raise AssertionError("no draft should be posted without a recipient")
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    assert "destinataire" in run(google.mail_draft("Corps sans personne à qui parler."))["error"]
 
 
 def _draft_resource(to="x@y.z", subject="Re: Résa", body="Corps initial.",

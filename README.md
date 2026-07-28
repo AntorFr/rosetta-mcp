@@ -55,7 +55,9 @@ guarded by the ingress SSO (forwardAuth) instead of the hub JWT.
 Bundled addons: `maps` (Google Routes / Places New / Weather - needs
 `GOOGLE_MAPS_API_KEY`), `transit` (SNCF + IDFM Navitia - needs `SNCF_API_KEY`,
 `IDFM_API_KEY`), `google` (user-data class: Gmail search / read / attachment +
-**drafts only** - list, read, create and amend, each answering with a stable `link`
+**drafts only** - list, read, create (standalone or as a reply, where the server derives
+thread, recipient and subject from the parent - `Reply-To` beating `From`) and amend,
+each answering with a stable `link`
 straight to the draft in the Gmail web UI (`ROSETTA_GMAIL_ACCOUNT` overrides the account
 index when the mailbox is not the browser's first) - plus
 Calendar list/create/update - deliberately **no send, no delete, no labels**:
