@@ -97,7 +97,7 @@ soient vérifiables. `mail_thread` expose `reply_to` quand il existe, et l'`id` 
 chaque message (c'est lui qu'on repasse en `reply_to_message_id`). Signature de
 `mail_draft` : `body` d'abord, `to`/`subject` devenus optionnels. 37 tests.
 
-**v0.6.0 — addon `withings` ÉCRIT, PAS ENCORE DÉPLOYÉ (2026-07-31)** : 2e addon de
+**v0.6.0 — addon `withings` DÉPLOYÉ sur tantive (2026-07-31)** : 2e addon de
 classe user-data, **lecture seule** — 5 outils (`withings_measures`, `_activity`,
 `_sleep`, `_workouts`, `_devices`). Mesures rendues avec label FR + unité (table des
 38 types Withings, filtre par nom/alias/code : « poids », « tension », « composition
@@ -119,15 +119,19 @@ un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 =
 (Decimal, sinon le float rend 78.19200000000001).
 
 **Prochaines étapes :**
-- [ ] **Withings, ce qui reste avant de s'en servir** (rien de tout ça n'est fait) :
-      (1) enregistrer l'app OAuth sur le dashboard développeur Withings, redirect URI
-      **exacte** `https://rosetta.mcp.berard.me/withings/callback` ; (2) client_id/secret
-      dans OpenBao → externalSecrets → env du pod ; (3) volume `/withings` sur le PV
-      existant (`ROSETTA_WITHINGS_DATA`) ; (4) ingress forwardAuth sur
-      `/withings/enroll` + `/withings/callback`, comme google ; (5) tag v0.6.0 → image
-      GHCR → bump k8s → rollout ; (6) enrôlement navigateur + e2e réel (exige un token
-      humain → l'Alfred du pod). Aucun appel réel à l'API Withings n'a encore eu lieu :
-      la forme des réponses vient de la doc et de `aiowithings`, pas d'un essai
+- [ ] **Withings — l'enrôlement et l'e2e restent à faire.** Ouvrir
+      `https://rosetta.mcp.berard.me/withings/enroll` au navigateur (SSO → consentement
+      Withings), puis demander ses mesures à Alfred depuis la PWA : ça exige un **token
+      humain**, donc c'est l'Alfred du pod qui déclenche le premier appel réel.
+      ⚠️ **Aucun appel réel à l'API Withings n'a encore eu lieu** : la forme des réponses
+      vient de la doc et d'`aiowithings`, pas d'un essai. C'est là que ça se vérifiera
+- [x] Withings déployé (2026-07-31) : app OAuth enregistrée par Sébastien (callback
+      `https://rosetta.mcp.berard.me/withings/callback`), `secret/apps/rosetta-mcp`
+      (`withings_client_id`/`_secret`) posé à la main dans OpenBao, image 0.6.0 GHCR
+      multi-arch, manifeste tantive bumpé (env + externalSecrets + routes d'enrôlement,
+      réplique unique commentée). Vérifié live : `/health` → 4 addons `ok` en 0.6.0,
+      ExternalSecret `SecretSynced` avec les 5 clés, `/withings/enroll` → 302 SSO,
+      `/withings/` sans token → 401
 - [ ] Alfred (cerveau) : consigne d'usage des mesures Withings — quels outils, quelle
       fenêtre par défaut, et le fait que « manual: true » n'est pas une mesure
 - [ ] Alfred : le contournement posé dans la skill `correspondance` (réécrire le
