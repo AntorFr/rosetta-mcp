@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rosetta-mcp"
-version = "0.5.0"
+version = "0.6.0"
 description = "Rosetta - a modular MCP hub: many thin MCP servers (addons) behind one HTTP endpoint and one OIDC auth"
 readme = "README.md"
 license = "MIT"
@@ -18,6 +18,10 @@ dependencies = [
     "starlette>=0.40",
     "uvicorn[standard]>=0.30",
     "pypdf>=5",
+    # `withings` resolves bare dates in the local zone, and zoneinfo needs a tz
+    # database - a slim base image is not guaranteed to ship one. Carry the
+    # fallback rather than depend on the answer.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

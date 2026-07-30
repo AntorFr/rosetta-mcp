@@ -33,7 +33,7 @@ import httpx
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from ..auth import current_claims
-from ._common import TIMEOUT, dig, new_server
+from ._common import TIMEOUT, dig, enrol_page, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -777,27 +777,7 @@ def _verify_state(state: str) -> str | None:
 
 
 def _page(glyph: str, title: str, message: str, status: int = 200) -> HTMLResponse:
-    """Minimal self-contained page for the browser-facing enrolment flow."""
-    return HTMLResponse(f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>rosetta — Google</title><style>
- body{{margin:0;min-height:100vh;display:grid;place-items:center;
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  background:#f4f1ea;color:#2b2b2b}}
- .card{{max-width:26rem;margin:1rem;padding:2.4rem 2.6rem;border-radius:16px;
-  background:#fff;box-shadow:0 10px 34px rgba(0,0,0,.09);text-align:center}}
- .glyph{{font-size:2.6rem;line-height:1}}
- h1{{font-size:.82rem;letter-spacing:.22em;text-transform:uppercase;
-  opacity:.5;margin:1rem 0 .4rem}}
- h2{{font-size:1.15rem;margin:.2rem 0 .8rem}}
- p{{line-height:1.55;margin:0;opacity:.85}}
- @media (prefers-color-scheme:dark){{
-  body{{background:#171614;color:#eae6df}}
-  .card{{background:#232019;box-shadow:0 10px 34px rgba(0,0,0,.55)}}}}
-</style></head><body><div class="card">
-<div class="glyph">{glyph}</div><h1>Rosetta · Google</h1>
-<h2>{title}</h2><p>{message}</p>
-</div></body></html>""", status_code=status)
+    return enrol_page("Google", glyph, title, message, status)
 
 
 def _remote_user(request) -> str | None:

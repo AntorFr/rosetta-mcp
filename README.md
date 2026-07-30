@@ -64,9 +64,20 @@ Calendar list/create/update - deliberately **no send, no delete, no labels**:
 the guard is the tool surface itself. Attachments come back transcribed to text
 (PDF via pypdf) for reading, or as raw base64 (`raw=True`) for native storage. One-time per-user enrolment at
 `/google/enroll` stores the Google refresh token server-side under
-`ROSETTA_GOOGLE_DATA`). Tool descriptions are intentionally in **French**: they
-are runtime UX for the French-speaking agents this hub serves, not
-documentation.
+`ROSETTA_GOOGLE_DATA`), and `withings` (user-data class, **read-only**: body
+measures, daily activity, sleep summaries, workouts and the devices themselves,
+enrolled once at `/withings/enroll`). Tool descriptions are intentionally in
+**French**: they are runtime UX for the French-speaking agents this hub serves,
+not documentation.
+
+The `withings` addon is the hub's only **single-writer** component: Withings
+rotates the refresh token on every refresh, invalidating the previous one, so
+the stored credential must have exactly one writer. Refreshes are serialized
+per user and the access token is cached for its full three hours - but running
+two replicas would have them burn each other's token. Keep it at one.
+Withings also answers **HTTP 200 for its failures**: the real outcome is the
+`status` field inside the JSON body, and a measure arrives as a `(value, unit)`
+pair where `unit` is a power of ten (`78192, -3` = 78.192 kg).
 
 ## Authentication
 
@@ -100,6 +111,10 @@ answers with a 307 redirect.
 | `GOOGLE_MAPS_API_KEY` | - | `maps` addon |
 | `SNCF_API_KEY`, `IDFM_API_KEY` | - | `transit` addon |
 | `ROSETTA_GMAIL_ACCOUNT` | `0` | `google` addon: account segment of the draft web links (`/mail/u/<this>/`) |
+| `ROSETTA_GOOGLE_DATA` | `/data/google` | `google` addon: per-user credential store (volume) |
+| `WITHINGS_CLIENT_ID`, `WITHINGS_CLIENT_SECRET` | - | `withings` addon: the OAuth app registered on the Withings developer dashboard |
+| `ROSETTA_WITHINGS_DATA` | `/data/withings` | `withings` addon: per-user credential store (volume) |
+| `TZ` | `Europe/Paris` | local zone used to resolve bare `YYYY-MM-DD` bounds |
 
 ## Development
 

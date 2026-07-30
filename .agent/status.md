@@ -1,6 +1,6 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-07-28
+> MàJ : 2026-07-31
 
 **État :** **v0.1.0 EN PROD** sur `https://rosetta.mcp.berard.me` (tantive, chart
 `rosetta-mcp` 0.1.0, image GHCR multi-arch). Hub MCP modulaire : addons `maps` +
@@ -97,7 +97,39 @@ soient vérifiables. `mail_thread` expose `reply_to` quand il existe, et l'`id` 
 chaque message (c'est lui qu'on repasse en `reply_to_message_id`). Signature de
 `mail_draft` : `body` d'abord, `to`/`subject` devenus optionnels. 37 tests.
 
+**v0.6.0 — addon `withings` ÉCRIT, PAS ENCORE DÉPLOYÉ (2026-07-31)** : 2e addon de
+classe user-data, **lecture seule** — 5 outils (`withings_measures`, `_activity`,
+`_sleep`, `_workouts`, `_devices`). Mesures rendues avec label FR + unité (table des
+38 types Withings, filtre par nom/alias/code : « poids », « tension », « composition
+corporelle », « 1,6,8 »). Enrôlement navigateur `/withings/enroll` → consent →
+`/withings/callback`, même patron que google (state HMAC, forwardAuth ingress), mais
+credentials du client par **env** (`WITHINGS_CLIENT_ID/SECRET`) → l'addon dégrade
+proprement sur `/health` s'il n'est pas provisionné. Page d'enrôlement factorisée dans
+`_common.enrol_page()` (google refactorisé dessus, tests inchangés). 20 tests, 57 au
+total. Nouvelle dep : `tzdata` (zoneinfo a besoin d'une base tz, non garantie sur une
+image slim — je n'ai PAS vérifié ce que porte `python:3.12-slim`, j'ai supprimé la
+question).
+
+Les 3 pièges Withings, tous silencieux, tous traités et testés : (1) **tout répond
+HTTP 200**, y compris les échecs — le vrai statut est `status` DANS le corps (0 = OK) ;
+(2) le **refresh token tourne** à chaque rafraîchissement et tue le précédent → écriture
+atomique avant usage, un verrou par utilisateur, token d'accès caché ses 3 h pleines, et
+**une seule réplique** (deux se brûleraient mutuellement le jeton) ; (3) une mesure est
+un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 = 78,192 kg
+(Decimal, sinon le float rend 78.19200000000001).
+
 **Prochaines étapes :**
+- [ ] **Withings, ce qui reste avant de s'en servir** (rien de tout ça n'est fait) :
+      (1) enregistrer l'app OAuth sur le dashboard développeur Withings, redirect URI
+      **exacte** `https://rosetta.mcp.berard.me/withings/callback` ; (2) client_id/secret
+      dans OpenBao → externalSecrets → env du pod ; (3) volume `/withings` sur le PV
+      existant (`ROSETTA_WITHINGS_DATA`) ; (4) ingress forwardAuth sur
+      `/withings/enroll` + `/withings/callback`, comme google ; (5) tag v0.6.0 → image
+      GHCR → bump k8s → rollout ; (6) enrôlement navigateur + e2e réel (exige un token
+      humain → l'Alfred du pod). Aucun appel réel à l'API Withings n'a encore eu lieu :
+      la forme des réponses vient de la doc et de `aiowithings`, pas d'un essai
+- [ ] Alfred (cerveau) : consigne d'usage des mesures Withings — quels outils, quelle
+      fenêtre par défaut, et le fait que « manual: true » n'est pas une mesure
 - [ ] Alfred : le contournement posé dans la skill `correspondance` (réécrire le
       segment en /u/0/, ignorer le lien de l'update) devient inutile en 0.4.2 —
       et sa 2e moitié devient FAUSSE, le lien de l'update étant désormais le bon.
