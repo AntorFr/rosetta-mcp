@@ -39,7 +39,7 @@ import httpx
 from starlette.responses import RedirectResponse
 
 from ..auth import current_claims
-from ._common import TIMEOUT, dig, enrol_page, new_server
+from ._common import TIMEOUT, dig, enrol_page, new_server, remote_user
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -428,9 +428,7 @@ def _verify_state(state: str, ttl: int = 600) -> str | None:
     return sub
 
 
-def _remote_user(request) -> str | None:
-    value = request.headers.get("remote-user") or request.headers.get("x-forwarded-user")
-    return unicodedata.normalize("NFC", value) if value else None
+_remote_user = remote_user  # cf. _common : la récupération latin-1 -> utf-8 y vit
 
 
 async def enroll(request):

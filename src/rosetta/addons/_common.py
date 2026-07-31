@@ -2,11 +2,39 @@
 
 from __future__ import annotations
 
+import unicodedata
+
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import HTMLResponse
 
 TIMEOUT = 15.0
+
+
+def remote_user(request) -> str | None:
+    """The SSO subject behind a browser-facing enrolment route, or None.
+
+    Set by the Authelia forwardAuth in front of those paths (ingress-level).
+
+    ⚠️ HTTP headers are latin-1 on the wire but Authelia emits UTF-8 bytes, so an
+    accented name arrives mangled ("SÃ©bastien"). Recovering it is NOT cosmetic:
+    this value becomes the KEY of the per-user credential store, while tool calls
+    look that store up with `preferred_username` taken from the JWT - which is
+    JSON, hence properly decoded. Skip the recovery and enrolment silently files
+    the credential under a key no call will ever match.
+
+    Lives here, shared, because it was solved once in `google` then re-typed
+    wrong in `github` (2026-07-31). A third addon inherits the fix, not the bug.
+    """
+    value = request.headers.get("Remote-User")
+    if value is None:
+        return None
+    try:
+        value = value.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        pass
+    # NFC: the same name typed on two keyboards must yield the same key.
+    return unicodedata.normalize("NFC", value)
 
 
 def new_server(name: str) -> FastMCP:

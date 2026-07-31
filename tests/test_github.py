@@ -209,6 +209,33 @@ def test_the_surface_is_the_guard():
     assert not interdits, f"outil hors contrat : {interdits}"
 
 
+def test_enrolment_key_survives_an_accent():
+    """Régression vécue en prod (2026-07-31). Les en-têtes HTTP sont du latin-1
+    sur le fil, Authelia y met de l'UTF-8 : « Sébastien » arrive « SÃ©bastien ».
+    Ce n'est PAS cosmétique — cette valeur est la CLÉ du magasin de credentials,
+    que les appels relisent avec `preferred_username` issu du JWT, lui
+    correctement décodé. Sans récupération, l'enrôlement range le credential sous
+    une clé qu'aucun appel ne retrouvera, et l'erreur ne se voit qu'à l'usage."""
+    class FauxRequest:
+        def __init__(self, headers):
+            self.headers = headers
+
+    mutile = "Sébastien".encode("utf-8").decode("latin-1")
+    assert mutile == "SÃ©bastien", "le cas de test doit reproduire la mutilation"
+    assert github._remote_user(FauxRequest({"Remote-User": mutile})) == "Sébastien"
+    # Un nom déjà propre ne doit pas être abîmé par la tentative de récupération.
+    assert github._remote_user(FauxRequest({"Remote-User": "sebastien"})) == "sebastien"
+    assert github._remote_user(FauxRequest({})) is None
+
+
+def test_google_and_github_share_one_implementation():
+    """La fonction avait été re-tapée dans `github`, sans le correctif. Une seule
+    implémentation : le prochain addon hérite du correctif, pas du bug."""
+    from rosetta.addons import _common, google
+    assert github._remote_user is _common.remote_user
+    assert google._remote_user is _common.remote_user
+
+
 def test_identity_is_user_scoped():
     assert github.identity == "user", "un token machine ne doit jamais lire les dépôts"
     assert "GITHUB_CLIENT_SECRET" in github.required_env

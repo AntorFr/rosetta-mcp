@@ -33,7 +33,7 @@ import httpx
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from ..auth import current_claims
-from ._common import TIMEOUT, dig, enrol_page, new_server
+from ._common import TIMEOUT, dig, enrol_page, new_server, remote_user
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -780,19 +780,11 @@ def _page(glyph: str, title: str, message: str, status: int = 200) -> HTMLRespon
     return enrol_page("Google", glyph, title, message, status)
 
 
-def _remote_user(request) -> str | None:
-    # Set by the Authelia forwardAuth in front of these paths (ingress-level).
-    value = request.headers.get("Remote-User")
-    if value is None:
-        return None
-    # HTTP headers are latin-1 on the wire but Authelia emits UTF-8 bytes:
-    # recover accents ("SÃ©bastien" -> "Sébastien"), then normalize (NFC) so
-    # the credential key is stable across clients and keyboards.
-    try:
-        value = value.encode("latin-1").decode("utf-8")
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
-    return unicodedata.normalize("NFC", value)
+# Extrait dans `_common` le 2026-07-31 : la même fonction avait été re-tapée SANS
+# la récupération latin-1 dans `github`, produisant un enrôlement rangé sous une
+# clé qu'aucun appel ne retrouve. Une seule implémentation, un seul endroit où se
+# tromper — et le prochain addon hérite du correctif, pas du bug.
+_remote_user = remote_user
 
 
 async def enroll(request):
