@@ -2,7 +2,7 @@
 
 > MàJ : 2026-07-31
 
-**Addon `food` — ÉCRIT, PAS ENCORE DÉPLOYÉ (2026-07-31, rosetta 0.8.0)** : Open Food
+**Addon `food` — DÉPLOYÉ (2026-07-31, rosetta 0.8.0)** : Open Food
 Facts, 2 outils en **lecture seule** — `food_product` (un code-barres ou un panier
 entier, 15 max par appel) et `food_search` (repli plein texte, moteur
 `search.openfoodfacts.org`). Classe **machine** : lecture anonyme, donc **aucun secret,
@@ -38,8 +38,12 @@ l'inventer.
 20 tests neufs, **91 au total au vert**. Vérifié **en réel** de bout en bout via le code
 de l'addon (pas curl) : Nutella → Nutri-Score E, NOVA 4, allergènes FR ; Bjorg muesli →
 Nutri-Score A, Eco-Score A, traces FR ; recherche « yaourt brassé vanille » → 2 produits
-Cora/Leader Price notés. **Reste : tag v0.8.0 → image GHCR → bump tantive → rollout**,
-puis `.mcp.json` + section CLAUDE.md côté cerveau, et le lecteur de code-barres PWA.
+Cora/Leader Price notés. **Déployé et vérifié en prod** : `/health` → `food: ok` en 0.8.0
+(6 addons au vert), `/food/` sans token → 401, métadonnées RFC 9728 → 200, et surtout
+**l'e2e par le vrai trajet** — pod Alfred → `rosetta-bridge food` → client_credentials
+Authelia → hub → OFF, `food_product("3017620422003")` rendant Nutella / Nutri-Score E /
+NOVA 4 / allergènes en français. `.mcp.json` et section `CLAUDE.md` posés côté cerveau
+(D38), lecteur de code-barres livré dans la PWA (agent-gw 0.44.0).
 
 **Addon `github` — DÉPLOYÉ (2026-07-31, rosetta 0.7.0)** : la surface d'écriture
 du pod Skippy, sur le patron de `google`. Classe user-data (`identity = "user"`) : credential
@@ -193,10 +197,11 @@ un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 =
 (Decimal, sinon le float rend 78.19200000000001).
 
 **Prochaines étapes :**
-- [ ] **`food` — déployer.** Tag v0.8.0 → image GHCR multi-arch → bump du tag dans
-      `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` → rollout. **Rien d'autre à
-      toucher** : pas de secret, pas d'ingress, pas d'ExternalSecret. Vérifier ensuite
-      `/health` → `food: ok` en 0.8.0
+- [x] **`food` déployé (2026-07-31)** : v0.8.0 → image GHCR multi-arch → tag bumpé dans
+      `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` → rollout ArgoCD. **Rien d'autre
+      n'a été touché**, comme prévu : pas de secret, pas d'ExternalSecret, et pas
+      d'ingress non plus — l'ingress principal est un catch-all `/` (relu, pas supposé)
+      et l'addon n'a aucune route d'enrôlement. Vérifié en prod, e2e compris
 - [ ] **Withings — l'enrôlement et l'e2e restent à faire.** Ouvrir
       `https://rosetta.mcp.berard.me/withings/enroll` au navigateur (SSO → consentement
       Withings), puis demander ses mesures à Alfred depuis la PWA : ça exige un **token
