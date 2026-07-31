@@ -2,6 +2,28 @@
 
 > MàJ : 2026-07-31
 
+**Addon `github` — écrit et testé, PAS ENCORE DÉPLOYÉ (2026-07-31)** : la surface d'écriture
+du pod Skippy, sur le patron de `google`. Classe user-data (`identity = "user"`) : credential
+côté serveur, un fichier par `sub` sous `ROSETTA_GITHUB_DATA`, enrôlement navigateur unique
+(`/github/enroll`) gardé par le forwardAuth. **Le pod ne voit jamais le jeton** — c'est ce qui
+fait que la garde n'est pas qu'un hook : un agent qui a un shell ne contourne pas un
+credential qu'il n'a pas.
+Surface : **7 lectures** (repo_list, repo_file, repo_tree, repo_commits, repo_search_code,
+repo_tags, actions_runs) et **2 écritures** — `repo_commit` (créer/modifier/**supprimer** en
+un commit atomique via l'API Git Data : blob → arbre → commit → ref ; `contenu: null`
+supprime, donc la suppression n'est jamais une capacité à débloquer) et `repo_tag`. N'existent
+pas, et c'est la garantie : création/suppression de dépôt, fork, suppression de branche,
+force-push, issues, PR, secrets d'Actions, réglages, collaborateurs. Un test le **verrouille**
+(compte d'outils + liste de mots interdits) : ajouter un outil hors contrat casse la suite.
+⚠️ Deux pièges encodés : GitHub **fait tourner le refresh token** à chaque usage (on restocke,
+sinon ré-enrôlement au tour suivant → 2ᵉ composant single-writer avec withings, réplique
+unique obligatoire), et un 403 nomme explicitement `workflows: write`, permission distincte de
+`contents: write` qu'exige tout commit touchant `.github/workflows/`.
+12 tests neufs, **69 au total au vert**, addon découvert et monté (`identity=user`).
+**Reste : tag → image → bump du chart tantive (déjà édité, non commité) → enrôlement
+navigateur.** Le coffre est prêt : `apps/rosetta-mcp` a reçu `github_client_id` et
+`github_client_secret` (écrits par Monsieur, Withings vérifié intact).
+
 **État :** **v0.1.0 EN PROD** sur `https://rosetta.mcp.berard.me` (tantive, chart
 `rosetta-mcp` 0.1.0, image GHCR multi-arch). Hub MCP modulaire : addons `maps` +
 `transit` montés par chemin (streamable HTTP stateless), isolation par addon

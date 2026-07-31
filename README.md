@@ -64,14 +64,27 @@ Calendar list/create/update - deliberately **no send, no delete, no labels**:
 the guard is the tool surface itself. Attachments come back transcribed to text
 (PDF via pypdf) for reading, or as raw base64 (`raw=True`) for native storage. One-time per-user enrolment at
 `/google/enroll` stores the Google refresh token server-side under
-`ROSETTA_GOOGLE_DATA`), and `withings` (user-data class, **read-only**: body
+`ROSETTA_GOOGLE_DATA`), `withings` (user-data class, **read-only**: body
 measures, daily activity, sleep summaries, workouts and the devices themselves,
-enrolled once at `/withings/enroll`). Tool descriptions are intentionally in
+enrolled once at `/withings/enroll`), and `github` (user-data class, for the
+coding agent: seven read tools — repo listing, file, tree, commits, code search,
+tags, Actions runs — and exactly **two** write tools, `repo_commit` (create /
+modify / **delete** in one atomic commit through the Git Data API; a `null`
+content deletes, so deletion is never a separate capability to unlock) and
+`repo_tag`. Deliberately **absent**, and that absence *is* the guarantee rather
+than a hook: repository creation or deletion, forks, branch deletion,
+force-push, issues, pull requests, Actions secrets, settings, collaborators.
+Needs a **GitHub App** with *Expire user authorization tokens* enabled — without
+it GitHub issues no refresh token — declaring `contents: write`,
+`metadata: read`, `actions: read` and, easily forgotten, **`workflows: write`**
+for any commit touching `.github/workflows/`. Credentials via
+`GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`, per-user tokens under
+`ROSETTA_GITHUB_DATA`, enrolled once at `/github/enroll`). Tool descriptions are intentionally in
 **French**: they are runtime UX for the French-speaking agents this hub serves,
 not documentation.
 
-The `withings` addon is the hub's only **single-writer** component: Withings
-rotates the refresh token on every refresh, invalidating the previous one, so
+`withings` and `github` are the hub's **single-writer** components: both
+rotate the refresh token on every refresh, invalidating the previous one, so
 the stored credential must have exactly one writer. Refreshes are serialized
 per user and the access token is cached for its full three hours - but running
 two replicas would have them burn each other's token. Keep it at one.
