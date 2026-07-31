@@ -2,7 +2,7 @@
 
 > MàJ : 2026-07-31
 
-**Addon `github` — écrit et testé, PAS ENCORE DÉPLOYÉ (2026-07-31)** : la surface d'écriture
+**Addon `github` — DÉPLOYÉ (2026-07-31, rosetta 0.7.0)** : la surface d'écriture
 du pod Skippy, sur le patron de `google`. Classe user-data (`identity = "user"`) : credential
 côté serveur, un fichier par `sub` sous `ROSETTA_GITHUB_DATA`, enrôlement navigateur unique
 (`/github/enroll`) gardé par le forwardAuth. **Le pod ne voit jamais le jeton** — c'est ce qui
@@ -20,9 +20,22 @@ sinon ré-enrôlement au tour suivant → 2ᵉ composant single-writer avec with
 unique obligatoire), et un 403 nomme explicitement `workflows: write`, permission distincte de
 `contents: write` qu'exige tout commit touchant `.github/workflows/`.
 12 tests neufs, **69 au total au vert**, addon découvert et monté (`identity=user`).
-**Reste : tag → image → bump du chart tantive (déjà édité, non commité) → enrôlement
-navigateur.** Le coffre est prêt : `apps/rosetta-mcp` a reçu `github_client_id` et
-`github_client_secret` (écrits par Monsieur, Withings vérifié intact).
+Vérifié en prod : `/health` → `github: ok`, `GITHUB_CLIENT_ID`/`SECRET` présents dans le
+Secret (ExternalSecret synchronisé, Withings intact), `/github/enroll` → **302 vers Authelia**
+et `/github/` (MCP) → **401**. **Reste : l'enrôlement navigateur de Monsieur**, puis le hook
+`github_guard.py` côté cockpit skippy.
+
+> 🔎 **Gotcha — un addon user-data qui gagne un enrôlement doit être ajouté à l'ingress
+> `enroll`.** Les chemins y sont énumérés un par un ; oublié, `/github/enroll` retombe sur
+> l'ingress principal, **sans forwardAuth**, donc sans en-tête `Remote-User` — et la page
+> répond « accès refusé » sans que rien n'indique que l'ingress est le fautif. Attrapé avant
+> mise en service le 2026-07-31, en relisant le chart plutôt qu'en testant à l'écran.
+
+> 🔎 **CI : un échec au *boot de buildx* n'est pas un échec de build.** Le 2026-07-31, le tag
+> v0.7.0 est mort sur `docker buildx create` → `moby/buildkit` intirable depuis Docker Hub
+> (`context deadline exceeded`) : le Dockerfile n'a jamais été lu, les tests jamais lancés.
+> Indice décisif : le build `main` du **même commit** était vert. `gh run rerun --failed`
+> suffit — ne pas partir chercher un bug qui n'existe pas.
 
 **État :** **v0.1.0 EN PROD** sur `https://rosetta.mcp.berard.me` (tantive, chart
 `rosetta-mcp` 0.1.0, image GHCR multi-arch). Hub MCP modulaire : addons `maps` +
