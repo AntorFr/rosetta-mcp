@@ -79,9 +79,19 @@ it GitHub issues no refresh token — declaring `contents: write`,
 `metadata: read`, `actions: read` and, easily forgotten, **`workflows: write`**
 for any commit touching `.github/workflows/`. Credentials via
 `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`, per-user tokens under
-`ROSETTA_GITHUB_DATA`, enrolled once at `/github/enroll`). Tool descriptions are intentionally in
-**French**: they are runtime UX for the French-speaking agents this hub serves,
-not documentation.
+`ROSETTA_GITHUB_DATA`, enrolled once at `/github/enroll`), and `food`
+(Open Food Facts: barcode(s) — a whole shopping basket in one call — to name,
+brand, ingredients, allergens, additives, nutriments per 100 g, Nutri-Score,
+NOVA and Eco-Score, plus a free-text search as a fallback. **No key, no
+account, no enrolment**: read access is anonymous, so this addon carries no
+secret and stays machine class. Open Food Facts is community-*editable* and no
+writing tool exists here — that absence is what stops an agent publishing into
+a public database on the user's behalf. Calls are rate-limited **in-process**
+because the upstream quota, 15 product reads and 10 searches per minute, is
+counted per **IP** — i.e. per deployment, shared with every other service
+behind the same egress — and exceeding it earns a ban for all of them).
+Tool descriptions are intentionally in **French**: they are runtime UX for the
+French-speaking agents this hub serves, not documentation.
 
 `withings` and `github` are the hub's **single-writer** components: both
 rotate the refresh token on every refresh, invalidating the previous one, so
@@ -127,6 +137,7 @@ answers with a 307 redirect.
 | `ROSETTA_GOOGLE_DATA` | `/data/google` | `google` addon: per-user credential store (volume) |
 | `WITHINGS_CLIENT_ID`, `WITHINGS_CLIENT_SECRET` | - | `withings` addon: the OAuth app registered on the Withings developer dashboard |
 | `ROSETTA_WITHINGS_DATA` | `/data/withings` | `withings` addon: per-user credential store (volume) |
+| `OFF_USER_AGENT` | `Alfred/1.0 (contact@antor.fr)` | `food` addon: Open Food Facts requires a custom User-Agent naming the app, or treats the caller as a bot |
 | `TZ` | `Europe/Paris` | local zone used to resolve bare `YYYY-MM-DD` bounds |
 
 ## Development

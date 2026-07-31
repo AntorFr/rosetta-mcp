@@ -2,6 +2,45 @@
 
 > MàJ : 2026-07-31
 
+**Addon `food` — ÉCRIT, PAS ENCORE DÉPLOYÉ (2026-07-31, rosetta 0.8.0)** : Open Food
+Facts, 2 outils en **lecture seule** — `food_product` (un code-barres ou un panier
+entier, 15 max par appel) et `food_search` (repli plein texte, moteur
+`search.openfoodfacts.org`). Classe **machine** : lecture anonyme, donc **aucun secret,
+aucun enrôlement, aucune route d'ingress, aucun ExternalSecret** — `ROSETTA_ADDONS`
+n'étant pas positionné sur tantive, l'addon se monte seul au rollout. Écriture
+délibérément absente (la base est communautaire, donc *éditable*) : c'est la garantie
+qu'un agent ne publiera pas dans une base publique au nom de Monsieur, sans hook.
+**Le MCP tout fait a été écarté après examen** (`domdomegg/openfoodfacts-mcp` : stdio
+Node — le transport qu'on démonte — 3 écritures + un `call_api` brut, surface non
+bornée) : l'API de lecture est un GET, l'addon fait 300 lignes.
+
+Les cinq pièges, **tous mesurés en vrai le 2026-07-31**, quatre silencieux :
+(1) produit absent = `status: 0` sous **HTTP 200 *ou* 404** selon le cas — le code HTTP
+seul ne dit rien, et « absent » est une réponse (`trouve: false`), pas une panne ;
+(2) `fields=` est **obligatoire** : 365 clés et 148 724 octets sans projection, 252 avec
+(× 590) ; (3) OFF sert une **page HTML** en 503 quand il sature — `.json()` lèverait ;
+(4) `ecoscore_grade` est la clé vivante, **pas** `environmental_score_grade` malgré le
+renommage amont en Green-Score (vérifié sur un produit noté : Bjorg → `"a"`) ;
+(5) ⚠️ **la projection ne sélectionne pas, elle re-rend** — `fields=allergens` renvoie
+« milk, nuts, soybeans » là où le document complet porte « lait, fruits à coque, soja »
+(`allergens_lc: fr`). Ni `lc=fr` ni le sous-domaine `fr.` n'y changent quoi que ce soit
+(les trois mesurés) → on demande les `_tags` et on traduit ici, sur la liste fermée des
+allergènes UE. Trouvé **uniquement** par l'appel réel : les fixtures ne pouvaient pas
+l'inventer.
+
+> ⚠️ **Le quota OFF se compte par IP, donc par déploiement — pas par appelant.** 15
+> lectures produit et 10 recherches par minute, dépassement = bannissement de l'IP de
+> sortie du cluster, partagée avec **tout le reste de la maison**. D'où le `_Quota`
+> (fenêtre glissante, verrou tenu pendant l'attente pour une file FIFO) : c'est la
+> raison d'être du module, pas un ornement. État par processus → **exact seulement en
+> réplique unique** (déjà le cas, cf. withings/github).
+
+20 tests neufs, **91 au total au vert**. Vérifié **en réel** de bout en bout via le code
+de l'addon (pas curl) : Nutella → Nutri-Score E, NOVA 4, allergènes FR ; Bjorg muesli →
+Nutri-Score A, Eco-Score A, traces FR ; recherche « yaourt brassé vanille » → 2 produits
+Cora/Leader Price notés. **Reste : tag v0.8.0 → image GHCR → bump tantive → rollout**,
+puis `.mcp.json` + section CLAUDE.md côté cerveau, et le lecteur de code-barres PWA.
+
 **Addon `github` — DÉPLOYÉ (2026-07-31, rosetta 0.7.0)** : la surface d'écriture
 du pod Skippy, sur le patron de `google`. Classe user-data (`identity = "user"`) : credential
 côté serveur, un fichier par `sub` sous `ROSETTA_GITHUB_DATA`, enrôlement navigateur unique
@@ -154,6 +193,10 @@ un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 =
 (Decimal, sinon le float rend 78.19200000000001).
 
 **Prochaines étapes :**
+- [ ] **`food` — déployer.** Tag v0.8.0 → image GHCR multi-arch → bump du tag dans
+      `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` → rollout. **Rien d'autre à
+      toucher** : pas de secret, pas d'ingress, pas d'ExternalSecret. Vérifier ensuite
+      `/health` → `food: ok` en 0.8.0
 - [ ] **Withings — l'enrôlement et l'e2e restent à faire.** Ouvrir
       `https://rosetta.mcp.berard.me/withings/enroll` au navigateur (SSO → consentement
       Withings), puis demander ses mesures à Alfred depuis la PWA : ça exige un **token
