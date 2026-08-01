@@ -2,7 +2,7 @@
 
 > MàJ : 2026-08-02
 
-**`github` — les pull requests, 0.11.0 ÉCRITE ET TESTÉE, PAS ENCORE DÉPLOYÉE (2026-08-02)** :
+**`github` — les pull requests, 0.11.0 DÉPLOYÉE EN PROD (2026-08-02)** :
 Skippy voyait passer six PR Renovate sur `k8s-home-lab` sans rien pouvoir en faire — la
 surface ne les connaissait pas. Surface **9 → 12** : `pull_requests` (liste), `pull_request`
 (une PR en détail : état de fusion, fichiers touchés, patch sur `diff=True`) et
@@ -346,26 +346,32 @@ un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 =
 (Decimal, sinon le float rend 78.19200000000001).
 
 **Prochaines étapes :**
-- [ ] ⚠️ **GESTE NAVIGATEUR DE MONSIEUR, préalable au déploiement de 0.11.0** : ajouter la
-      permission **« Pull requests » en LECTURE** à la GitHub App (réglages de l'App →
-      Permissions → Repository → Pull requests → Read-only), puis **accepter la nouvelle
-      permission sur l'installation** (GitHub la propose par bandeau / mail). Sans elle,
-      `pull_requests` et `pull_request` rendent un 403 — qui nomme la permission, donc
-      l'erreur s'explique toute seule. La **fusion**, elle, passe par `contents: write`,
-      déjà déclaré (table des permissions requises de la doc GitHub — *je le tiens de la
-      doc, pas d'un essai* : si le 403 tombe quand même sur le PUT, passer « Pull
-      requests » en Read & write)
-- [ ] Déployer 0.11.0 : tag `v0.11.0` → CI verte → **vérifier l'image GHCR multi-arch
-      présente** → bump du tag dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` →
-      refresh ArgoCD. Rien d'autre à toucher : pas de secret, pas d'ExternalSecret, pas
-      d'ingress (aucune route neuve)
-- [ ] **e2e réel** après déploiement — il exige un **token humain**, donc c'est le Skippy du
-      pod qui le fera depuis la PWA : lister les PR de `k8s-home-lab` (six Renovate ouvertes
-      au 2026-08-01), en lire une en détail, en fusionner une sous bouclier 🛡. C'est là que
-      se vérifiera ce que la doc promet — la mergeabilité asynchrone comme la permission
-- [ ] Cockpit : `git pull` **dans le pod** après publication de `skippy-cockpit`. Le hook vit
-      dans le workspace, pas dans l'image : poussé ≠ actif (le grep sur le fichier réel est
-      la seule preuve)
+- [x] **Permission « Pull requests » (lecture) posée sur la GitHub App et approuvée au
+      niveau du compte** par Monsieur (2026-08-02). La fusion, elle, passe par
+      `contents: write` déjà déclaré — *tenu de la table des permissions de la doc GitHub,
+      pas d'un essai* : si un 403 tombait sur le PUT, passer « Pull requests » en Read &
+      write. Le message d'erreur de l'addon nomme la permission, l'erreur s'expliquera
+      d'elle-même
+- [x] **0.11.0 déployée et vérifiée en prod (2026-08-02)** : tag `v0.11.0` → CI verte
+      (tests + build) → image GHCR **vérifiée multi-arch avant le bump** (amd64 + arm64
+      présents au manifeste) → tag bumpé dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml`
+      → ArgoCD `home` resynchronisé sur `fbd04fc`. **Rien d'autre touché**, comme prévu : pas
+      de secret, pas d'ExternalSecret, pas d'ingress. Vérifié dans le pod : `/health` → **7
+      addons `ok` en 0.11.0**, et l'image déployée expose bien **12 outils** github dont les
+      trois PR
+- [ ] **e2e réel — LE SEUL RESTE, et il ne peut pas venir d'ici.** Il exige un token humain,
+      donc c'est le Skippy du **pod** qui le fera depuis la PWA : lister les PR de
+      `k8s-home-lab` (six Renovate ouvertes au 2026-08-01), en lire une en détail, en
+      fusionner une sous bouclier 🛡.
+      ⚠️ **Ne PAS le simuler depuis le Mac par `kubectl exec`** en appelant
+      `_access_token(sub)` : ça marcherait, et ça ferait TOURNER le refresh token dans un
+      second processus — exactement le viol de single-writer que tout le reste du dépôt
+      s'échine à empêcher. Le pod garderait un jeton mort et Monsieur devrait se ré-enrôler.
+      La tentation est réelle ; la réponse est non
+- [ ] Cockpit : `git pull` **dans le pod** (`kubectl -n home exec deploy/skippy`) — refusé au
+      Mac par le classifieur de permissions le 2026-08-02, donc à faire par Monsieur ou
+      depuis la PWA. Le hook vit dans le workspace, pas dans l'image : poussé ≠ actif, et le
+      grep sur le fichier réel est la seule preuve
 - [x] **Le club de Carquefou dans `ROSETTA_WIND_SPOTS`** (le seul spot durable), posé
       dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` au déploiement de 0.10.0 :
 
