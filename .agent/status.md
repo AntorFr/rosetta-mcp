@@ -1,6 +1,34 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-07-31
+> MàJ : 2026-08-01
+
+**`maps` — le vent enfin lu (2026-08-01, rosetta 0.9.0, PAS ENCORE DÉPLOYÉ)** :
+`weather_forecast` **jetait le bloc `wind`** que la Weather API renvoie sous
+`daytimeForecast`, dans la réponse déjà facturée — donc « ça souffle demain ? » était
+structurellement sans réponse, sans que rien ne le signale. Corrigé, et étendu :
+`weather_now` gagne la **rafale** et les degrés, et un 6ᵉ outil `weather_hourly`
+(heure par heure, température / ciel / pluie / vent) répond à « il pleut à quelle
+heure ? ». Direction rendue en **cardinal français dérivé des degrés** (« NNO », « O »),
+pas en traduisant l'enum Google (`NORTH_NORTHWEST`) : l'arithmétique survit à un enum
+absent ou `UNSPECIFIED`, et il n'y a pas de table de 16 entrées à désynchroniser.
+
+Trois choix encodés, tous vérifiés dans la doc plutôt que supposés :
+(1) `weather_hourly` **plafonne à 24 h** — `pageSize` de `forecast/hours:lookup` est
+« a value from 1 to 24 (inclusive) », donc au-delà il faut paginer par `nextPageToken`
+pour une question qui ne dépasse jamais demain ; (2) ⚠️ **proto3 JSON omet les scalaires
+nuls, donc minuit arrive SANS sa clé `hours`** — lue comme `None`, elle blanchirait une
+ligne sur vingt-quatre ; le défaut à 0 est juste que le champ soit présent ou absent ;
+(3) une rafale non prévue est **omise, jamais rendue à 0 km/h** (même règle que withings
+et food : un trou n'est pas un calme plat).
+
+⚠️ **Aucun appel réel à la Weather API** : la clé est côté cluster, le façonnage vient de
+la doc REST (`ForecastHour`, `Wind`, `pageSize`). C'est là que ça se vérifiera au
+déploiement — comme pour withings en 0.6.0.
+
+**Et `maps` avait ZÉRO test** — le plus vieil addon du hub, le seul nu, ce qui est
+exactement pourquoi le vent a pu être jeté des mois sans que personne le voie. Couture
+`_transport`/`_client()` posée (patron de `food`), **15 tests neufs, 106 au total au
+vert**.
 
 **Addon `food` — DÉPLOYÉ (2026-07-31, rosetta 0.8.0)** : Open Food
 Facts, 2 outils en **lecture seule** — `food_product` (un code-barres ou un panier
@@ -197,6 +225,24 @@ un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 =
 (Decimal, sinon le float rend 78.19200000000001).
 
 **Prochaines étapes :**
+- [ ] **Addon `meteo` (0.10.0) — le vent de navigation, en cours.** Open-Meteo, classe
+      machine (aucune clé, aucun secret, aucun enrôlement, aucun volume, comme `food`) :
+      `wind_forecast` (horaire, **nœuds** natifs via `wind_speed_unit=kn`, rafales, borné
+      au jour clair par `sunrise`/`sunset`, comparaison multi-modèles) et `wind_spots`
+      (registre `ROSETTA_WIND_SPOTS`). **Reste à obtenir de Sébastien : ses spots de voile
+      légère.** Les quatre pièges sont déjà mesurés en vrai sur l'API le 2026-08-01 :
+      un modèle hors domaine **disparaît** de la réponse (pas de `null`, pas d'`error`,
+      HTTP 200 — et `hourly` vide s'il était seul) ; le **suffixe de clé dépend du nombre
+      de SURVIVANTS**, donc 2 modèles demandés → 1 revenu → clé nue `wind_speed_10m`,
+      qu'un parseur naïf attribuerait au mauvais modèle ; hors **horizon** en revanche ce
+      sont des `null` (AROME HD mesuré à 69 h, la doc annonce « 2 days ») ; et le
+      géocodage rend « La Torche » dans **l'Allier, à 367 m d'altitude**
+- [ ] **Déployer 0.9.0** (`maps`, le vent) : tag → image GHCR → bump tantive → rollout,
+      puis vérifier en réel que `weather_hourly` et les rafales sortent bien — c'est le
+      seul façonnage du hub jamais confronté à sa vraie API
+- [ ] Alfred (cerveau) : la section « Maps & météo » de `CLAUDE.md` ignore
+      `weather_hourly` et décrit `maps` comme un « serveur local » alors qu'il passe par
+      `rosetta-bridge` depuis la 0.1.0. À corriger côté Alfred, pas ici
 - [x] **`food` déployé (2026-07-31)** : v0.8.0 → image GHCR multi-arch → tag bumpé dans
       `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` → rollout ArgoCD. **Rien d'autre
       n'a été touché**, comme prévu : pas de secret, pas d'ExternalSecret, et pas

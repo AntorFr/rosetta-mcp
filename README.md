@@ -53,7 +53,11 @@ HTTP routes (`extra_routes` / `open_paths`) for browser-facing enrolment flows,
 guarded by the ingress SSO (forwardAuth) instead of the hub JWT.
 
 Bundled addons: `maps` (Google Routes / Places New / Weather - needs
-`GOOGLE_MAPS_API_KEY`), `transit` (SNCF + IDFM Navitia - needs `SNCF_API_KEY`,
+`GOOGLE_MAPS_API_KEY`; the three weather tools - current, daily and
+hour-by-hour - all report **wind with its gust** and a bearing in degrees plus
+a French 16-point cardinal derived from them, never Google's `cardinal` enum.
+`weather_hourly` stops at 24 h because the upstream `pageSize` caps there, and
+one page is enough to answer when the rain starts), `transit` (SNCF + IDFM Navitia - needs `SNCF_API_KEY`,
 `IDFM_API_KEY`), `google` (user-data class: Gmail search / read / attachment +
 **drafts only** - list, read, create (standalone or as a reply, where the server derives
 thread, recipient and subject from the parent - `Reply-To` beating `From`) and amend,
