@@ -2,8 +2,8 @@
 
 > MàJ : 2026-08-01
 
-**Addon `meteo` — ÉCRIT ET VÉRIFIÉ EN RÉEL (2026-08-01, rosetta 0.10.0, PAS ENCORE
-DÉPLOYÉ)** : Open-Meteo, le vent pour la **voile légère**. Classe machine comme `food` —
+**Addon `meteo` — DÉPLOYÉ ET VÉRIFIÉ EN PROD (2026-08-01, rosetta 0.10.0)** : Open-Meteo,
+le vent pour la **voile légère**. Classe machine comme `food` —
 aucune clé, aucun compte, aucun enrôlement, aucun volume, aucun ExternalSecret, aucune
 route d'ingress. Deux outils : `wind_forecast` (horaire, **nœuds natifs** via
 `wind_speed_unit=kn`, vent moyen + rafale + **ratio de rafale** + direction, borné au
@@ -51,6 +51,29 @@ La Torche 3 modèles → AROME HD 6,8 kn / ARPEGE 5,2 / ECMWF 3,8, **écart 3,0 
 et ratios cohérents ; Québec → AROME HD crie son 400, ECMWF répond ; J+6 → AROME HD dit
 son horizon ; modèle bidon → erreur amont rapportée telle quelle.
 
+**Déploiement (2026-08-01)** : v0.10.0 → CI verte (tests + build) → image GHCR multi-arch
+**vérifiée présente avant le bump** (amd64 + arm64) → tag 0.8.0→0.10.0 et
+`ROSETTA_WIND_SPOTS` posés dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` → refresh
+ArgoCD forcé. **Rien d'autre touché**, comme prévu : pas de secret, pas d'ExternalSecret,
+pas d'ingress. Vérifié en prod : `/health` → **7 addons `ok` en 0.10.0**, `/meteo/` sans
+jeton → **401**, métadonnées RFC 9728 → 200. Et **l'e2e par le vrai trajet** — pod Alfred →
+`rosetta-bridge meteo` → client_credentials Authelia → hub → Open-Meteo : `wind_spots` rend
+le registre de prod, `wind_forecast` sur le club rend AROME HD 4,6 / ARPEGE 5,3 / ECMWF 3,9
+kn, **écart 1,4 kn**, en heure locale et en nœuds.
+
+> 🔎 **Gotcha — `kubectl exec -i` derrière `ssh` ne fait pas passer stdin, et le pont
+> meurt sur EOF.** Deux échecs muets superposés (sortie vide, aucune erreur) : la double
+> couche ssh→kubectl n'a pas relayé le tuyau, puis `rosetta-bridge` s'est arrêté dès la fin
+> de son entrée, avant le retour HTTP. La forme qui marche pour tout e2e MCP en pod :
+> encoder le JSON-RPC en base64, le dérouler **dans** le conteneur, et **tenir stdin
+> ouvert** — `sh -c '{ echo <b64> | base64 -d; sleep 25; } | rosetta-bridge <addon>'`.
+
+**⚠️ `maps` a enfin rencontré sa vraie API (2026-08-01)** — le seul façonnage du hub qui ne
+l'avait jamais fait. Vérifié depuis le pod (la clé y vit) : `weather_now` rend bien la
+rafale (16 km/h moyen, 23 en rafale, N), `weather_forecast` rend **le vent qu'il jetait**
+(11 / 23 km/h, NNE), et `weather_hourly` sort la ligne **`2026-08-02T00:00`** — le pari
+proto3 sur la clé `hours` absente à minuit tient, mesuré et non plus supposé.
+
 **Le registre compte moins que prévu (arbitrage du 2026-08-01)** : les spots de Sébastien
 **dépendent du lieu de vacances**, donc inconnus à l'avance — seul le club de voile de
 **Carquefou** est durable. Le chemin qui porte le poids n'est donc pas le registre mais le
@@ -62,7 +85,7 @@ seulement les villes — chercher le club là-bas, repasser ses « lat,lng » ic
 vacances n'ont donc rien à faire en variable d'environnement : ils vivent dans la mémoire
 d'Alfred, au voyage, où ils s'écrivent sans rollout.
 
-**`maps` — le vent enfin lu (2026-08-01, rosetta 0.9.0, PAS ENCORE DÉPLOYÉ)** :
+**`maps` — le vent enfin lu (2026-08-01, rosetta 0.9.0, DÉPLOYÉ dans la 0.10.0)** :
 `weather_forecast` **jetait le bloc `wind`** que la Weather API renvoie sous
 `daytimeForecast`, dans la réponse déjà facturée — donc « ça souffle demain ? » était
 structurellement sans réponse, sans que rien ne le signale. Corrigé, et étendu :
@@ -81,9 +104,9 @@ ligne sur vingt-quatre ; le défaut à 0 est juste que le champ soit présent ou
 (3) une rafale non prévue est **omise, jamais rendue à 0 km/h** (même règle que withings
 et food : un trou n'est pas un calme plat).
 
-⚠️ **Aucun appel réel à la Weather API** : la clé est côté cluster, le façonnage vient de
-la doc REST (`ForecastHour`, `Wind`, `pageSize`). C'est là que ça se vérifiera au
-déploiement — comme pour withings en 0.6.0.
+Le façonnage a été écrit contre la doc REST (`ForecastHour`, `Wind`, `pageSize`), la clé
+vivant côté cluster — et **confronté à la vraie API au déploiement** le jour même, depuis
+le pod : les trois choix ci-dessus tiennent (cf. le bloc `maps` en tête de fiche).
 
 **Et `maps` avait ZÉRO test** — le plus vieil addon du hub, le seul nu, ce qui est
 exactement pourquoi le vent a pu être jeté des mois sans que personne le voie. Couture
@@ -285,8 +308,8 @@ un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 =
 (Decimal, sinon le float rend 78.19200000000001).
 
 **Prochaines étapes :**
-- [ ] **Le club de Carquefou dans `ROSETTA_WIND_SPOTS`** (le seul spot durable), à poser
-      dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` **au déploiement de 0.10.0** :
+- [x] **Le club de Carquefou dans `ROSETTA_WIND_SPOTS`** (le seul spot durable), posé
+      dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` au déploiement de 0.10.0 :
 
       ```yaml
       ROSETTA_WIND_SPOTS: '{"SNO Carquefou":{"latlng":"47.30144,-1.52660","note":"Sport Nautique de l''Ouest — 17 chemin de Port Breton, sur l''Erdre"}}'
@@ -299,17 +322,17 @@ un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 =
       Open-Meteo donne **8 m d'altitude** à ce point contre **34 m** au bourg de
       Carquefou — c'est bien l'Erdre. ⚠️ Le géocodeur d'Open-Meteo, lui, aurait rendu le
       bourg : il ne connaît que des communes
-- [ ] **Déployer 0.10.0** (`meteo` + le vent de `maps`) : tag → image GHCR multi-arch →
-      bump du tag dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` → rollout ArgoCD.
-      **Rien d'autre à toucher pour `meteo`** (pas de secret, pas d'ExternalSecret, pas
-      d'ingress — l'ingress principal est un catch-all `/`, et l'addon n'a aucune route
-      d'enrôlement), sauf `ROSETTA_WIND_SPOTS` quand les spots seront connus. Puis
-      vérifier en réel **le façonnage `maps`**, seul du hub à n'avoir jamais rencontré sa
-      vraie API — la clé Google est côté cluster
-- [ ] Alfred (cerveau) : câbler `meteo` (`.mcp.json` + section `CLAUDE.md`) et lui
-      apprendre la lecture — la rafale et le ratio priment sur le vent moyen, l'écart
-      entre modèles EST la confiance, et un lieu `resolution: geocodage` se vérifie avant
-      d'être cru
+- [x] **0.10.0 déployée et vérifiée en prod (2026-08-01)**, e2e par le pont compris, et
+      le façonnage `maps` confronté à la vraie Weather API au passage (cf. plus haut)
+- [x] Alfred (cerveau) : `meteo` câblé (`.mcp.json` + section `CLAUDE.md`, commit
+      `conf: meteo …`), avec la lecture qui compte — la rafale et le ratio priment sur le
+      vent moyen, l'écart entre modèles EST la confiance, un lieu `resolution: geocodage`
+      se vérifie avant d'être cru, et les spots de séjour s'écrivent dans le dossier du
+      voyage. Deux faits périmés de la section `maps` corrigés au passage (« serveur
+      local » alors qu'elle passe par `rosetta-bridge`, et `weather_hourly` absent)
+- [ ] Une **décision D42** consignant `meteo` dans `DECISIONS.md` d'Alfred reste à écrire
+      si Monsieur veut le « pourquoi » dans le journal des décisions — la section
+      `CLAUDE.md` est pour l'instant autoportante, sans référence pendante
 - [ ] Alfred (cerveau) : la section « Maps & météo » de `CLAUDE.md` ignore
       `weather_hourly` et décrit `maps` comme un « serveur local » alors qu'il passe par
       `rosetta-bridge` depuis la 0.1.0. À corriger côté Alfred, pas ici
