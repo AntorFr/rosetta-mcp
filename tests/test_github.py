@@ -190,21 +190,202 @@ def test_repo_tag_never_moves_an_existing_tag(enrolled):
     assert "existe déjà" in out["error"]
 
 
+# ---------------------------------------------------------------- pull requests
+
+PR_OUVERTE = {
+    "number": 1052, "title": "chore(deps): update unifi-network-mcp to v0.25.0",
+    "user": {"login": "renovate[bot]"}, "draft": False, "state": "open",
+    "merged": False, "mergeable": True, "mergeable_state": "clean",
+    "commits": 1, "additions": 1, "deletions": 1, "body": "bump",
+    "head": {"ref": "renovate/unifi-0.x", "sha": "f" * 40},
+    "base": {"ref": "main"}, "updated_at": "2026-08-01T21:46:41Z",
+    "html_url": "https://github.com/AntorFr/k8s-home-lab/pull/1052",
+}
+
+
+@pytest.fixture
+def sans_attente(monkeypatch):
+    """Les retries de mergeabilité ne doivent pas ralentir la suite."""
+    monkeypatch.setattr(github, "_ATTENTE_MERGEABLE", 0)
+
+
+def test_pull_requests_lists_the_freshest_first(enrolled):
+    vu = {}
+
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        vu["path"] = request.url.path
+        vu["params"] = dict(request.url.params)
+        return httpx.Response(200, json=[PR_OUVERTE])
+
+    transport(handler)
+    out = run(github.pull_requests("k8s-home-lab"))
+    assert vu["path"] == "/repos/AntorFr/k8s-home-lab/pulls"
+    assert vu["params"]["state"] == "open" and vu["params"]["sort"] == "updated"
+    assert out["pull_requests"][0]["numero"] == 1052
+    assert out["pull_requests"][0]["auteur"] == "renovate[bot]"
+
+
+def test_unknown_state_is_refused_before_the_call(enrolled):
+    out = run(github.pull_requests("demo", etat="merged"))
+    assert "error" in out and "open, closed ou all" in out["error"]
+
+
+def test_mergeable_null_is_retried_not_taken_for_a_no(enrolled, sans_attente):
+    """LE piège : GitHub calcule la mergeabilité en tâche de fond et rend `null`
+    à la première lecture d'une PR endormie. Rendu tel quel, un agent y lit « pas
+    fusionnable » — un faux négatif silencieux sur une PR parfaitement saine."""
+    lectures = []
+
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        if request.url.path.endswith("/files"):
+            return httpx.Response(200, json=[])
+        lectures.append(1)
+        if len(lectures) == 1:
+            return httpx.Response(200, json=PR_OUVERTE | {"mergeable": None,
+                                                          "mergeable_state": "unknown"})
+        return httpx.Response(200, json=PR_OUVERTE)
+
+    transport(handler)
+    out = run(github.pull_request("k8s-home-lab", 1052))
+    assert len(lectures) == 2, "la 2e lecture est ce que la doc GitHub prescrit"
+    assert out["fusionnable"] is True
+    assert out["etat_fusion_lisible"] == "prête à fusionner"
+    assert "avertissement" not in out
+
+
+def test_mergeable_still_null_warns_instead_of_lying(enrolled, sans_attente):
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        if request.url.path.endswith("/files"):
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json=PR_OUVERTE | {"mergeable": None})
+
+    transport(handler)
+    out = run(github.pull_request("demo", 7))
+    assert out["fusionnable"] is None
+    assert "n'est PAS" in out["avertissement"], "« non calculé » n'est pas « non fusionnable »"
+
+
+def test_diff_is_opt_in(enrolled, sans_attente):
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        if request.url.path.endswith("/files"):
+            return httpx.Response(200, json=[{
+                "filename": "clusters/tantive/x.yml", "status": "modified",
+                "additions": 1, "deletions": 1, "patch": "@@ -1 +1 @@\n-v1\n+v2",
+            }])
+        return httpx.Response(200, json=PR_OUVERTE)
+
+    transport(handler)
+    nu = run(github.pull_request("demo", 7))
+    assert "patch" not in nu["fichiers"][0]
+    avec = run(github.pull_request("demo", 7, diff=True))
+    assert "+v2" in avec["fichiers"][0]["patch"]
+
+
+def test_403_on_pulls_names_the_pull_requests_permission(enrolled):
+    """Le 403 de /pulls ne vient PAS de `workflows` : le message doit nommer la
+    bonne permission, sinon on cherche au mauvais endroit dans les réglages."""
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        return httpx.Response(403, json={"message": "Resource not accessible"})
+
+    transport(handler)
+    out = run(github.pull_requests("demo"))
+    assert "Pull requests" in out["error"] and "workflows" not in out["error"]
+
+
+def test_merge_carries_the_head_sha_it_just_read(enrolled, sans_attente):
+    """Sans `sha`, GitHub fusionnerait ce qui est en tête AU MOMENT du PUT. On
+    passe la tête relue : la branche qui bouge entre-temps donne un 409, pas une
+    fusion silencieuse de ce qu'on n'a pas regardé."""
+    vu = {}
+
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        if request.method == "PUT":
+            vu["body"] = json.loads(request.content)
+            return httpx.Response(200, json={"sha": "d" * 40, "merged": True})
+        return httpx.Response(200, json=PR_OUVERTE)
+
+    transport(handler)
+    out = run(github.pull_request_merge("k8s-home-lab", 1052, methode="squash"))
+    assert vu["body"] == {"merge_method": "squash", "sha": "f" * 40}
+    assert out["sha"] == "dddddddd" and out["branche_fusionnee"] == "renovate/unifi-0.x"
+
+
+def test_merge_refuses_a_draft_without_writing(enrolled, sans_attente):
+    ecritures = []
+
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        if request.method == "PUT":
+            ecritures.append(1)
+            return httpx.Response(200, json={"sha": "x", "merged": True})
+        return httpx.Response(200, json=PR_OUVERTE | {"draft": True})
+
+    transport(handler)
+    out = run(github.pull_request_merge("demo", 7))
+    assert "brouillon" in out["error"] and not ecritures, "aucun PUT ne doit partir"
+
+
+def test_merge_refuses_a_conflicted_pr(enrolled, sans_attente):
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        return httpx.Response(200, json=PR_OUVERTE | {"mergeable": False,
+                                                      "mergeable_state": "dirty"})
+
+    transport(handler)
+    out = run(github.pull_request_merge("demo", 7))
+    assert "conflits" in out["error"]
+
+
+def test_merge_translates_the_409_into_a_moved_head(enrolled, sans_attente):
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        if request.method == "PUT":
+            return httpx.Response(409, json={"message": "Head branch was modified"})
+        return httpx.Response(200, json=PR_OUVERTE)
+
+    transport(handler)
+    out = run(github.pull_request_merge("demo", 7))
+    assert "a bougé" in out["error"] and "ffffffff" in out["error"]
+
+
+def test_unknown_merge_method_is_refused(enrolled):
+    out = run(github.pull_request_merge("demo", 7, methode="fast-forward"))
+    assert "error" in out and "merge, squash ou rebase" in out["error"]
+
+
 # ---------------------------------------------------------------- la surface
 
 def test_the_surface_is_the_guard():
     """Ce qui n'est pas là est la GARANTIE, pas un oubli : aucun outil ne peut
-    supprimer un dépôt, forker, écraser une branche, ni toucher aux secrets.
-    Ce test échoue le jour où quelqu'un en ajoute un sans relire la garde."""
+    supprimer un dépôt, forker, écraser une branche, ouvrir/commenter/approuver
+    une PR, ni toucher aux secrets. Ce test échoue le jour où quelqu'un en ajoute
+    un sans relire la garde — hook `github_guard.py` du cockpit compris."""
     exposed = {t for t in dir(github) if not t.startswith("_") and callable(getattr(github, t))}
     outils = exposed & {
         "repo_list", "repo_file", "repo_tree", "repo_commits", "repo_search_code",
-        "repo_tags", "actions_runs", "repo_commit", "repo_tag",
+        "repo_tags", "actions_runs", "pull_requests", "pull_request",
+        "repo_commit", "repo_tag", "pull_request_merge",
     }
-    assert len(outils) == 9, "la surface attendue est de 9 outils"
+    assert len(outils) == 12, "la surface attendue est de 12 outils"
     interdits = [n for n in exposed if any(
         mot in n for mot in ("delete", "fork", "force", "secret", "collaborator",
-                             "issue", "pull_request", "admin", "webhook")
+                             "issue", "admin", "webhook", "review", "approve",
+                             "comment", "close")
     )]
     assert not interdits, f"outil hors contrat : {interdits}"
 

@@ -72,16 +72,29 @@ the guard is the tool surface itself. Attachments come back transcribed to text
 `ROSETTA_GOOGLE_DATA`), `withings` (user-data class, **read-only**: body
 measures, daily activity, sleep summaries, workouts and the devices themselves,
 enrolled once at `/withings/enroll`), and `github` (user-data class, for the
-coding agent: seven read tools — repo listing, file, tree, commits, code search,
-tags, Actions runs — and exactly **two** write tools, `repo_commit` (create /
-modify / **delete** in one atomic commit through the Git Data API; a `null`
-content deletes, so deletion is never a separate capability to unlock) and
-`repo_tag`. Deliberately **absent**, and that absence *is* the guarantee rather
-than a hook: repository creation or deletion, forks, branch deletion,
-force-push, issues, pull requests, Actions secrets, settings, collaborators.
+coding agent: nine read tools — repo listing, file, tree, commits, code search,
+tags, Actions runs, plus pull requests (list, and one in detail with its merge
+state, changed files and, on request, the patch) — and exactly **three** write
+tools, `repo_commit` (create / modify / **delete** in one atomic commit through
+the Git Data API; a `null` content deletes, so deletion is never a separate
+capability to unlock), `repo_tag`, and `pull_request_merge`. Deliberately
+**absent**, and that absence *is* the guarantee rather than a hook: repository
+creation or deletion, forks, branch deletion, force-push, issues, opening /
+closing / commenting / reviewing a pull request, Actions secrets, settings,
+collaborators.
+
+Two upstream behaviours shape the pull request tools. GitHub computes
+mergeability **asynchronously**: the first read of a dormant PR answers
+`mergeable: null` and starts a background job, so the addon re-reads rather than
+handing an agent a null it would read as "not mergeable" — a silent false
+negative. And a merge carries the head SHA that was just read, so a branch that
+moved in between earns a 409 instead of merging something nobody looked at.
+The branch is never deleted afterwards: that tool does not exist here.
+
 Needs a **GitHub App** with *Expire user authorization tokens* enabled — without
 it GitHub issues no refresh token — declaring `contents: write`,
-`metadata: read`, `actions: read` and, easily forgotten, **`workflows: write`**
+`metadata: read`, `actions: read`, **`pull requests: read`** (merging itself
+goes through `contents: write`) and, easily forgotten, **`workflows: write`**
 for any commit touching `.github/workflows/`. Credentials via
 `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`, per-user tokens under
 `ROSETTA_GITHUB_DATA`, enrolled once at `/github/enroll`), and `food`

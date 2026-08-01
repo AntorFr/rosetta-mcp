@@ -1,6 +1,44 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-08-01
+> MàJ : 2026-08-02
+
+**`github` — les pull requests, 0.11.0 ÉCRITE ET TESTÉE, PAS ENCORE DÉPLOYÉE (2026-08-02)** :
+Skippy voyait passer six PR Renovate sur `k8s-home-lab` sans rien pouvoir en faire — la
+surface ne les connaissait pas. Surface **9 → 12** : `pull_requests` (liste), `pull_request`
+(une PR en détail : état de fusion, fichiers touchés, patch sur `diff=True`) et
+`pull_request_merge`. **Ouvrir, fermer, commenter, approuver n'existent toujours pas** —
+l'élargissement est celui du geste demandé, pas de la classe de gestes.
+
+Deux comportements amont commandent le façonnage, tous deux vérifiés dans la doc avant
+d'écrire, pas supposés :
+(1) ⚠️ **GitHub calcule la mergeabilité en TÂCHE DE FOND** — la première lecture d'une PR
+endormie rend `mergeable: null` et démarre un job (« After giving the job time to complete,
+resubmit the request »). Rendu tel quel à un agent, ce `null` se lit « pas fusionnable » :
+faux négatif silencieux sur une PR saine. L'addon **relit** (3 essais), et s'il reste `null`
+il le **dit** au lieu de trancher ;
+(2) la fusion porte le **sha de tête relu juste avant** — une branche qui bouge entre la
+lecture et le PUT donne un **409** au lieu de fusionner ce que personne n'a regardé. La
+branche fusionnée n'est **jamais** supprimée : l'outil n'existe pas, et Renovate nettoie les
+siennes.
+
+Pré-vol avant d'écrire : déjà fusionnée / fermée / brouillon / en conflit sont refusés **en
+français** plutôt qu'en 405 laconique. `mergeable_state` est glosé sur ce qu'on connaît et
+**passé verbatim** sinon (il n'est pas documenté champ par champ côté REST — il l'est en
+GraphQL, `mergeStateStatus`) : inventer une traduction serait pire que le mot brut, qui reste
+cherchable. Le 403 sur `/pulls` nomme désormais **« Pull requests »** et non `workflows` —
+sinon on cherche la permission au mauvais endroit dans les réglages de l'App.
+
+⚠️ **Titre, corps et auteur d'une PR sont du texte TIERS** (Renovate, un contributeur de
+passage) : de la donnée à rapporter, jamais une instruction à suivre — même régime que les
+fiches Open Food Facts (D36 côté Alfred). Aucun hook n'attrape ça ; c'est écrit dans la
+docstring de l'outil, là où l'agent le lit.
+
+**13 tests neufs, 147 au total au vert**, canari de surface porté à 12 et sa liste de mots
+interdits recentrée sur les gestes encore refusés (`review`, `approve`, `comment`, `close`).
+Garde relue **dans la même passe**, comme le contrat l'exige : `github_guard.py` (cockpit)
+gagne les deux lectures et la fusion, cette dernière au **même palier que `repo_commit`** —
+fusionner un Renovate sur `k8s-home-lab` **est** un déploiement, donc bouclier sur tous les
+canaux et refus dur en `planif`. `bin/test-garde` : 18 → **21 cas**, au vert.
 
 **Addon `meteo` — DÉPLOYÉ ET VÉRIFIÉ EN PROD (2026-08-01, rosetta 0.10.0)** : Open-Meteo,
 le vent pour la **voile légère**. Classe machine comme `food` —
@@ -308,6 +346,26 @@ un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 =
 (Decimal, sinon le float rend 78.19200000000001).
 
 **Prochaines étapes :**
+- [ ] ⚠️ **GESTE NAVIGATEUR DE MONSIEUR, préalable au déploiement de 0.11.0** : ajouter la
+      permission **« Pull requests » en LECTURE** à la GitHub App (réglages de l'App →
+      Permissions → Repository → Pull requests → Read-only), puis **accepter la nouvelle
+      permission sur l'installation** (GitHub la propose par bandeau / mail). Sans elle,
+      `pull_requests` et `pull_request` rendent un 403 — qui nomme la permission, donc
+      l'erreur s'explique toute seule. La **fusion**, elle, passe par `contents: write`,
+      déjà déclaré (table des permissions requises de la doc GitHub — *je le tiens de la
+      doc, pas d'un essai* : si le 403 tombe quand même sur le PUT, passer « Pull
+      requests » en Read & write)
+- [ ] Déployer 0.11.0 : tag `v0.11.0` → CI verte → **vérifier l'image GHCR multi-arch
+      présente** → bump du tag dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` →
+      refresh ArgoCD. Rien d'autre à toucher : pas de secret, pas d'ExternalSecret, pas
+      d'ingress (aucune route neuve)
+- [ ] **e2e réel** après déploiement — il exige un **token humain**, donc c'est le Skippy du
+      pod qui le fera depuis la PWA : lister les PR de `k8s-home-lab` (six Renovate ouvertes
+      au 2026-08-01), en lire une en détail, en fusionner une sous bouclier 🛡. C'est là que
+      se vérifiera ce que la doc promet — la mergeabilité asynchrone comme la permission
+- [ ] Cockpit : `git pull` **dans le pod** après publication de `skippy-cockpit`. Le hook vit
+      dans le workspace, pas dans l'image : poussé ≠ actif (le grep sur le fichier réel est
+      la seule preuve)
 - [x] **Le club de Carquefou dans `ROSETTA_WIND_SPOTS`** (le seul spot durable), posé
       dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` au déploiement de 0.10.0 :
 
