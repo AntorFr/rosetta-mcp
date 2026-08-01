@@ -8,6 +8,7 @@ Like the stone: one endpoint, and every agent reads it in its own tongue.
 
 ```
 agent ──Bearer JWT──►  https://rosetta.example.com/maps/      (Google Maps, Places, Weather)
+                       https://rosetta.example.com/meteo/     (Open-Meteo, wind for sailing)
                        https://rosetta.example.com/transit/   (SNCF + IDFM/Navitia)
                        https://rosetta.example.com/<addon>/   (drop a module in, it mounts)
                        https://rosetta.example.com/health     (unauthenticated, per-addon state)
@@ -94,6 +95,33 @@ a public database on the user's behalf. Calls are rate-limited **in-process**
 because the upstream quota, 15 product reads and 10 searches per minute, is
 counted per **IP** — i.e. per deployment, shared with every other service
 behind the same egress — and exceeding it earns a ban for all of them).
+Finally `meteo` (Open-Meteo: hour-by-hour **wind in knots** - mean, gust and
+gust ratio, bearing - for planning a sail. Like `food` it needs no key, no
+account and no enrolment, so it holds no secret and stays machine class.
+Two tools: `wind_forecast`, bounded to the spot's daylight hours and able to
+run the same slot past several models, and `wind_spots` over a registry given
+in `ROSETTA_WIND_SPOTS`.
+
+Three upstream behaviours drive the design, all measured against the live API
+rather than read off the docs:
+
+- A model asked **outside its domain vanishes from a batched response** - no
+  error, no null column, HTTP 200 - while the same model asked **on its own**
+  answers an honest `400 / "No data is available for this location"`.
+- The response key is suffixed by **how many models survived**, not by how many
+  were asked: two requested and one returned yields the bare `wind_speed_10m`,
+  so a naive parser files one model's numbers under another's name.
+- Past its **horizon** a model does the opposite and returns `null` rows.
+
+Hence: **one HTTP request per model, never a batched one**, which makes the
+first two impossible rather than merely handled, and nulls are dropped instead
+of being read as a flat calm. Wind is requested in knots natively
+(`wind_speed_unit=kn`) and in the spot's own zone (`timezone=auto` - pinning
+the house zone onto a spot elsewhere pushes sunset onto the next calendar day
+and collapses the daylight window). Bearings are averaged as a **circular**
+mean, because 350° and 10° average to north, not to south. The data is
+**CC-BY 4.0**, so every answer names its source).
+
 Tool descriptions are intentionally in **French**: they are runtime UX for the
 French-speaking agents this hub serves, not documentation.
 
@@ -142,7 +170,8 @@ answers with a 307 redirect.
 | `WITHINGS_CLIENT_ID`, `WITHINGS_CLIENT_SECRET` | - | `withings` addon: the OAuth app registered on the Withings developer dashboard |
 | `ROSETTA_WITHINGS_DATA` | `/data/withings` | `withings` addon: per-user credential store (volume) |
 | `OFF_USER_AGENT` | `Alfred/1.0 (contact@antor.fr)` | `food` addon: Open Food Facts requires a custom User-Agent naming the app, or treats the caller as a bot |
-| `TZ` | `Europe/Paris` | local zone used to resolve bare `YYYY-MM-DD` bounds |
+| `ROSETTA_WIND_SPOTS` | *(empty)* | `meteo` addon: named sailing spots as JSON, `{"La Torche": "47.8367,-4.3492"}` or `{"La Torche": {"latlng": "…", "note": "…"}}`. Read per call, so adding a spot is a rollout, not a rebuild; a malformed entry is logged and skipped rather than taking the registry down |
+| `TZ` | `Europe/Paris` | local zone used to resolve bare `YYYY-MM-DD` bounds (and, in `meteo`, only to decide what "today" means - forecasts use the spot's own zone) |
 
 ## Development
 

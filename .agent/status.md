@@ -2,6 +2,58 @@
 
 > MàJ : 2026-08-01
 
+**Addon `meteo` — ÉCRIT ET VÉRIFIÉ EN RÉEL (2026-08-01, rosetta 0.10.0, PAS ENCORE
+DÉPLOYÉ)** : Open-Meteo, le vent pour la **voile légère**. Classe machine comme `food` —
+aucune clé, aucun compte, aucun enrôlement, aucun volume, aucun ExternalSecret, aucune
+route d'ingress. Deux outils : `wind_forecast` (horaire, **nœuds natifs** via
+`wind_speed_unit=kn`, vent moyen + rafale + **ratio de rafale** + direction, borné au
+**jour clair** du spot, plusieurs modèles en un appel = mesure de confiance) et
+`wind_spots` (registre `ROSETTA_WIND_SPOTS`).
+
+**Pourquoi pas `maps`, qui parle déjà météo** : Google, c'est MetNet — un modèle fermé,
+aucun choix. Ce qui tranche une sortie, c'est la rafale à côté du moyen et l'**accord
+entre modèles** ; AROME France HD résout 1,5 km là où un modèle global voit 25 km, et une
+brise côtière tient tout entière dans cet écart.
+
+**LA décision de conception : un appel HTTP PAR MODÈLE, jamais groupé.** Ce n'est pas du
+zèle, c'est ce qui rend deux pièges *impossibles* au lieu de les rustiner :
+(1) un modèle **hors domaine disparaît** d'une réponse groupée — pas d'erreur, pas de
+colonne `null`, HTTP 200 (AROME HD + ECMWF sur Québec rend les chiffres d'ECMWF seuls,
+octet pour octet identiques à ECMWF demandé seul) ; demandé **seul**, il est honnête :
+`400 / "No data is available for this location"` ; (2) le **suffixe de clé dépend du
+nombre de SURVIVANTS**, pas de la demande — 2 demandés, 1 revenu, et la clé est le
+`wind_speed_10m` nu, qu'un parseur naïf attribue au mauvais modèle. Un modèle par appel →
+clé toujours nue, absence toujours criée. Coût : N appels sur un budget de 600/min.
+
+Les autres pièges, tous mesurés : (3) **hors horizon c'est l'inverse** — des `null`, pas
+une disparition (AROME HD mesuré à **69 h** quand la doc annonce « 2 days ») ; les lignes
+nulles sont **écartées, jamais lues comme un calme plat** ; (4) le **géocodage noie** — «
+La Torche » résout dans **l'Allier, 367 m d'altitude**, et rend 5,5 kn quand la vraie
+pointe en rend 5,2 : deux chiffres également crédibles, d'où le registre en premier et un
+**avertissement + région + altitude** sur tout lieu deviné.
+
+⚠️ **Bug trouvé en faisant tourner l'addon pour de vrai, pas en le relisant** :
+`timezone` était figé sur le fuseau de la maison, donc à Québec le coucher du soleil tombe
+le **lendemain** en heure de Paris → fenêtre inversée → réponse « créneau vide ». Corrigé
+en `timezone=auto` (l'heure locale **du spot**, ce que la doc de l'outil promettait déjà),
+avec repli sur la journée pleine si la fenêtre ressort à l'envers. Idem la moyenne des
+directions : **circulaire** (atan2), parce que 350° et 10° donnent le **nord**, pas le sud
+— sur un spot à shore break c'est la différence entre onshore et offshore. Et un test a
+attrapé un cap à **360°** (modulo appliqué avant l'arrondi).
+
+Pas de `_Quota` ici, délibérément : Open-Meteo alloue **600/min et 10 000/jour** contre
+15/min chez OFF — quarante fois plus large, et une sortie se planifie en quelques appels.
+Licence **CC-BY 4.0** → chaque réponse nomme sa source.
+
+**28 tests neufs, 134 au total au vert**, addon découvert et monté (`/health` → `meteo:
+ok`, 7 addons). **Vérifié en réel de bout en bout par le code de l'addon** (pas curl) :
+La Torche 3 modèles → AROME HD 6,8 kn / ARPEGE 5,2 / ECMWF 3,8, **écart 3,0 kn**, rafales
+et ratios cohérents ; Québec → AROME HD crie son 400, ECMWF répond ; J+6 → AROME HD dit
+son horizon ; modèle bidon → erreur amont rapportée telle quelle.
+
+**Reste : les spots de Sébastien.** Le registre est vide tant qu'ils ne sont pas fournis —
+l'addon marche quand même en « lat,lng » et en toutes lettres (avec l'avertissement).
+
 **`maps` — le vent enfin lu (2026-08-01, rosetta 0.9.0, PAS ENCORE DÉPLOYÉ)** :
 `weather_forecast` **jetait le bloc `wind`** que la Weather API renvoie sous
 `daytimeForecast`, dans la réponse déjà facturée — donc « ça souffle demain ? » était
@@ -225,21 +277,22 @@ un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 =
 (Decimal, sinon le float rend 78.19200000000001).
 
 **Prochaines étapes :**
-- [ ] **Addon `meteo` (0.10.0) — le vent de navigation, en cours.** Open-Meteo, classe
-      machine (aucune clé, aucun secret, aucun enrôlement, aucun volume, comme `food`) :
-      `wind_forecast` (horaire, **nœuds** natifs via `wind_speed_unit=kn`, rafales, borné
-      au jour clair par `sunrise`/`sunset`, comparaison multi-modèles) et `wind_spots`
-      (registre `ROSETTA_WIND_SPOTS`). **Reste à obtenir de Sébastien : ses spots de voile
-      légère.** Les quatre pièges sont déjà mesurés en vrai sur l'API le 2026-08-01 :
-      un modèle hors domaine **disparaît** de la réponse (pas de `null`, pas d'`error`,
-      HTTP 200 — et `hourly` vide s'il était seul) ; le **suffixe de clé dépend du nombre
-      de SURVIVANTS**, donc 2 modèles demandés → 1 revenu → clé nue `wind_speed_10m`,
-      qu'un parseur naïf attribuerait au mauvais modèle ; hors **horizon** en revanche ce
-      sont des `null` (AROME HD mesuré à 69 h, la doc annonce « 2 days ») ; et le
-      géocodage rend « La Torche » dans **l'Allier, à 367 m d'altitude**
-- [ ] **Déployer 0.9.0** (`maps`, le vent) : tag → image GHCR → bump tantive → rollout,
-      puis vérifier en réel que `weather_hourly` et les rafales sortent bien — c'est le
-      seul façonnage du hub jamais confronté à sa vraie API
+- [ ] **Les spots de voile légère de Sébastien** — à demander, puis poser en
+      `ROSETTA_WIND_SPOTS` dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml`. Sans
+      eux le registre est vide (l'addon marche, mais chaque nom passe par le géocodage,
+      donc par le piège de l'Allier). ⚠️ **Vérifier chaque spot avant de l'inscrire** :
+      coordonnées relues sur une carte, pas géocodées à l'aveugle
+- [ ] **Déployer 0.10.0** (`meteo` + le vent de `maps`) : tag → image GHCR multi-arch →
+      bump du tag dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` → rollout ArgoCD.
+      **Rien d'autre à toucher pour `meteo`** (pas de secret, pas d'ExternalSecret, pas
+      d'ingress — l'ingress principal est un catch-all `/`, et l'addon n'a aucune route
+      d'enrôlement), sauf `ROSETTA_WIND_SPOTS` quand les spots seront connus. Puis
+      vérifier en réel **le façonnage `maps`**, seul du hub à n'avoir jamais rencontré sa
+      vraie API — la clé Google est côté cluster
+- [ ] Alfred (cerveau) : câbler `meteo` (`.mcp.json` + section `CLAUDE.md`) et lui
+      apprendre la lecture — la rafale et le ratio priment sur le vent moyen, l'écart
+      entre modèles EST la confiance, et un lieu `resolution: geocodage` se vérifie avant
+      d'être cru
 - [ ] Alfred (cerveau) : la section « Maps & météo » de `CLAUDE.md` ignore
       `weather_hourly` et décrit `maps` comme un « serveur local » alors qu'il passe par
       `rosetta-bridge` depuis la 0.1.0. À corriger côté Alfred, pas ici
