@@ -51,8 +51,16 @@ La Torche 3 modèles → AROME HD 6,8 kn / ARPEGE 5,2 / ECMWF 3,8, **écart 3,0 
 et ratios cohérents ; Québec → AROME HD crie son 400, ECMWF répond ; J+6 → AROME HD dit
 son horizon ; modèle bidon → erreur amont rapportée telle quelle.
 
-**Reste : les spots de Sébastien.** Le registre est vide tant qu'ils ne sont pas fournis —
-l'addon marche quand même en « lat,lng » et en toutes lettres (avec l'avertissement).
+**Le registre compte moins que prévu (arbitrage du 2026-08-01)** : les spots de Sébastien
+**dépendent du lieu de vacances**, donc inconnus à l'avance — seul le club de voile de
+**Carquefou** est durable. Le chemin qui porte le poids n'est donc pas le registre mais le
+**texte libre**, et le géocodeur Open-Meteo ne connaît que des **communes** : « Carquefou »
+rend le bourg à 34 m, jamais l'Erdre. Deux conséquences encodées : les **autres candidats**
+remontent au lieu d'être jetés (« Saint-Pierre » en rend trois), et l'avertissement pointe
+vers la **composition avec `search_places`** (addon `maps`), qui connaît les lieux et pas
+seulement les villes — chercher le club là-bas, repasser ses « lat,lng » ici. Les spots de
+vacances n'ont donc rien à faire en variable d'environnement : ils vivent dans la mémoire
+d'Alfred, au voyage, où ils s'écrivent sans rollout.
 
 **`maps` — le vent enfin lu (2026-08-01, rosetta 0.9.0, PAS ENCORE DÉPLOYÉ)** :
 `weather_forecast` **jetait le bloc `wind`** que la Weather API renvoie sous
@@ -277,11 +285,20 @@ un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 =
 (Decimal, sinon le float rend 78.19200000000001).
 
 **Prochaines étapes :**
-- [ ] **Les spots de voile légère de Sébastien** — à demander, puis poser en
-      `ROSETTA_WIND_SPOTS` dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml`. Sans
-      eux le registre est vide (l'addon marche, mais chaque nom passe par le géocodage,
-      donc par le piège de l'Allier). ⚠️ **Vérifier chaque spot avant de l'inscrire** :
-      coordonnées relues sur une carte, pas géocodées à l'aveugle
+- [ ] **Le club de Carquefou dans `ROSETTA_WIND_SPOTS`** (le seul spot durable), à poser
+      dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` **au déploiement de 0.10.0** :
+
+      ```yaml
+      ROSETTA_WIND_SPOTS: '{"SNO Carquefou":{"latlng":"47.30144,-1.52660","note":"Sport Nautique de l''Ouest — 17 chemin de Port Breton, sur l''Erdre"}}'
+      ```
+
+      Coordonnées **vérifiées**, pas devinées : club nommé par Sébastien
+      (`snonantes.fr`) → adresse relevée sur le site → géocodée par la **Base Adresse
+      Nationale** (`api-adresse.data.gouv.fr`, autorité sur les adresses FR, sans clé),
+      qui rend un `housenumber` à 47.30144,-1.52660. Contrôle de vraisemblance :
+      Open-Meteo donne **8 m d'altitude** à ce point contre **34 m** au bourg de
+      Carquefou — c'est bien l'Erdre. ⚠️ Le géocodeur d'Open-Meteo, lui, aurait rendu le
+      bourg : il ne connaît que des communes
 - [ ] **Déployer 0.10.0** (`meteo` + le vent de `maps`) : tag → image GHCR multi-arch →
       bump du tag dans `clusters/tantive/home/mcp/rosetta-mcp-helm.yml` → rollout ArgoCD.
       **Rien d'autre à toucher pour `meteo`** (pas de secret, pas d'ExternalSecret, pas

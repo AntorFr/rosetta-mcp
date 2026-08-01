@@ -138,6 +138,41 @@ def test_geocoded_spot_is_flagged_with_region_and_elevation(monkeypatch):
     assert "Allier" in place["lieu_resolu"]
 
 
+def test_other_candidates_are_offered_not_dropped(monkeypatch):
+    """Away from home an ambiguous name is the NORMAL case - the spots move
+    with the holidays. Silently keeping the first hit is how "La Torche" ends
+    up in the Allier, so the runners-up come back too."""
+    ambiguous = {"results": [
+        {"name": "Saint-Pierre", "latitude": 46.0, "longitude": 3.0,
+         "admin2": "Allier", "country": "France"},
+        {"name": "Saint-Pierre", "latitude": 47.6, "longitude": -3.3,
+         "admin2": "Morbihan", "country": "France"},
+        {"name": "Saint-Pierre", "latitude": 45.5, "longitude": 5.0,
+         "admin2": "Isère", "country": "France"},
+    ]}
+    monkeypatch.setattr(meteo, "_transport", mock(router(geocode=ambiguous)))
+
+    async def go():
+        async with meteo._client() as client:
+            return await meteo._resolve(client, "Saint-Pierre")
+
+    place = run(go())
+    assert len(place["autres_candidats"]) == 2
+    assert any("Morbihan" in c for c in place["autres_candidats"])
+
+
+def test_a_single_hit_offers_no_alternatives(monkeypatch):
+    monkeypatch.setattr(meteo, "_transport", mock(router(geocode={"results": [
+        {"name": "Carquefou", "latitude": 47.2972, "longitude": -1.4921,
+         "elevation": 34.0, "admin2": "Loire-Atlantique", "country": "France"}]})))
+
+    async def go():
+        async with meteo._client() as client:
+            return await meteo._resolve(client, "Carquefou")
+
+    assert "autres_candidats" not in run(go())
+
+
 def test_the_registry_beats_the_geocoder(monkeypatch):
     """Which is the whole point of having one."""
     monkeypatch.setenv("ROSETTA_WIND_SPOTS", TORCHE)

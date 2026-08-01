@@ -168,25 +168,38 @@ async def _geocode(client: httpx.AsyncClient, place: str) -> dict | str:
     lands in the Allier, at 367 m).
     """
     r = await client.get(GEOCODING_URL,
-                         params={"name": place, "count": 1, "language": "fr", "format": "json"})
+                         params={"name": place, "count": 5, "language": "fr", "format": "json"})
     if r.status_code != 200:
         return f"géocodage impossible pour « {place} » : HTTP {r.status_code}."
     hits = (r.json() or {}).get("results") or []
     if not hits:
         return (f"aucun lieu trouvé pour « {place} ». Donner des coordonnées « lat,lng », "
                 f"ou inscrire le spot au registre (ROSETTA_WIND_SPOTS).")
+
+    def label(hit):
+        region = ", ".join(str(hit[k]) for k in ("admin2", "admin1", "country") if hit.get(k))
+        return f"{hit.get('name')} ({region})" if region else str(hit.get("name"))
+
     top = hits[0]
-    region = ", ".join(str(top[k]) for k in ("admin2", "admin1", "country") if top.get(k))
-    return {
+    resolved = {
         "nom": top.get("name"),
         "lat": top.get("latitude"),
         "lng": top.get("longitude"),
         "resolution": "geocodage",
-        "lieu_resolu": f"{top.get('name')} ({region})" if region else top.get("name"),
+        "lieu_resolu": label(top),
         "altitude_m": top.get("elevation"),
-        "avertissement": ("lieu DEVINÉ par géocodage, pas inscrit au registre — vérifier "
-                          "que la région et l'altitude correspondent bien au plan d'eau visé."),
+        "avertissement": ("lieu DEVINÉ par géocodage, pas inscrit au registre. Ce géocodeur ne "
+                          "connaît que des COMMUNES, jamais un club ni une cale : il rend le "
+                          "bourg, pas le plan d'eau. Vérifier région et altitude ; pour viser un "
+                          "vrai site nautique, le chercher avec `search_places` (addon maps) et "
+                          "repasser ici ses « lat,lng »."),
     }
+    # The alternatives are returned rather than dropped: an ambiguous name is
+    # the normal case away from home, and a silent first-hit is how "La Torche"
+    # ends up in the Allier. Making the choice visible costs nothing.
+    if others := [label(h) for h in hits[1:]]:
+        resolved["autres_candidats"] = others
+    return resolved
 
 
 async def _resolve(client: httpx.AsyncClient, spot: str) -> dict | str:
@@ -390,8 +403,12 @@ async def wind_forecast(spot: str, jour: str | None = None, de: int | None = Non
 
     spot : un nom du registre (voir `wind_spots`), « lat,lng », ou un lieu en
            toutes lettres. ⚠️ En toutes lettres, le lieu est DEVINÉ par
-           géocodage : la réponse porte alors un avertissement, la région et
-           l'altitude — les vérifier avant de conclure.
+           géocodage, qui ne connaît que des COMMUNES : il rend le bourg, pas
+           le plan d'eau. La réponse porte alors un avertissement, la région,
+           l'altitude et les autres candidats — les vérifier avant de conclure.
+           Pour un vrai site nautique (club, cale, base), le chercher d'abord
+           avec `search_places` (addon maps), qui connaît les lieux et non
+           seulement les villes, puis repasser ici ses « lat,lng ».
     jour : AAAA-MM-JJ (défaut : aujourd'hui).
     de / a : bornes horaires (0-23). Omises, le créneau est le JOUR CLAIR
              (lever/coucher du soleil du lieu).
