@@ -1,6 +1,59 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-08-02
+> MàJ : 2026-08-04
+
+**`trace` — les balades sur OpenStreetMap, 0.12.0 ÉCRITE, PAS ENCORE DÉPLOYÉE
+(2026-08-04)** : Alfred fabriquait ses GPX à la main — il tapait les 328 `<trkpt>` de la
+boucle de Vannes au clavier, cinq commits en 24 h pour la même trace, et **zéro `<ele>`**
+dans le fichier alors que le routeur les lui rendait. Deux outils, **aucune clé** :
+`trace_calcule` (BRouter/OSM) rend distance, D+/D−, revêtement, mètres d'escaliers,
+distance de chaque étape et **écart de chaque repère à la trace** ; `trace_pois` (Overpass)
+rend ce qu'un annuaire de commerces ne connaît pas — eau potable, points de vue, abris,
+bancs, sentiers balisés. Le tourisme reste chez `search_places` (addon `maps`) : les notes
+et le **nombre d'avis** sont à Google, OSM n'a pas d'équivalent.
+
+⚠️ **La géométrie ne traverse JAMAIS le modèle.** `trace_calcule` rend les chiffres et une
+URL ; `GET /trace/geometrie` rend la trace encodée en polyline, que l'appelant écrit
+directement sur disque. Mesuré sur Vannes : **2 300 octets** contre 13 000 de GPX, et
+~700 tokens vus par l'agent contre ~12 000 **deux fois** (lecture + réécriture).
+La route est **sans état** — l'URL porte les mêmes paramètres, donc on recalcule au lieu de
+tenir un cache qui demanderait une durée de vie, une taille et un nombre de réplicas.
+
+**Validation e2e contre le travail à la main d'Alfred** (boucle de Vannes, 19 repères) :
+3 036 m et 328 points **au mètre près**, étapes 410/266 (Garenne) et 315 (Connétable →
+jardins) identiques à sa fiche, et l'écart de **27 m** du bastion de Gréguennic — qu'il
+avait mesuré à la main — retrouvé tout seul. En prime, deux faits qu'il n'avait pas :
+**67 m d'escaliers** et 1 298 m de pavés.
+
+Quatre comportements amont, tous **mesurés sur les services vivants** le 2026-08-04, jamais
+lus dans une doc : (1) BRouter parle **`lon,lat`**, l'inverse de tout le reste du hub — se
+tromper rend un itinéraire plausible dans le mauvais hémisphère, pas une erreur, d'où le
+retournement dans **une seule** fonction ; (2) ses échecs ne sont **pas du JSON** — 400 +
+texte brut pour un îlot injoignable, **500 + corps VIDE** pour un profil inconnu ; les noms
+de profil sont sensibles à la casse, le seul profil piéton est `hiking-beta`, et `trekking`
+est un profil **vélo** malgré son nom ; (3) le dénivelé est filtré par **hystérésis 5 m**,
+une seule méthode pour les deux sens — l'accumulation brute gonflait une boucle réelle de
+9,5 km de 378 à 506 m ; (4) Overpass tronque sur un plafond **commun**, donc « eau, vue,
+banc » revenait en bancs seulement — un jeu nommé et un plafond **par type**.
+
+Le piège qui a mordu à l'e2e : un repère s'ancre au sommet le plus proche **en cherchant
+vers l'avant seulement**. Sur une boucle, le dernier point EST le premier, et une recherche
+globale le ramenait à l'indice 0 — les 260 m de retour au port devenaient 2 770 m comptés à
+l'envers autour de la ville.
+
+`altimetrie="ign"` reprofile sur **RGE ALTI** (IGN Géoplateforme, 1 m, France, gratuit et
+sans clé). Sur la boucle de Chartreuse les deux modèles s'accordent à 1 % : c'est une
+**option**, pas le défaut — elle ne paie son aller-retour que sur terrain fin. Deux pièges
+IGN : le service **rééchantillonne le long de la ligne** au lieu de répondre aux sommets
+qu'on lui donne, et les booléens doivent partir en **chaînes** `"true"`/`"false"`.
+
+**Prochaines étapes :**
+- [ ] Déployer 0.12.0 et vérifier `trace` **par le pont** (e2e), pas seulement sur `/health`
+- [ ] Côté pod (agent-pods) : le rapatriement de `/trace/geometrie` dans le fichier de
+      parcours, puis l'assemblage du GPX au téléchargement
+- [ ] Auto-héberger BRouter si l'usage tient (l'instance publique est une courtoisie, sans SLA)
+- [ ] `trace_boucle` (génération d'une boucle de N km) : BRouter ne sait pas le faire,
+      il faudrait GraphHopper — pas commencé, pas promis
 
 **`github` — les pull requests, 0.11.0 DÉPLOYÉE EN PROD (2026-08-02)** :
 Skippy voyait passer six PR Renovate sur `k8s-home-lab` sans rien pouvoir en faire — la

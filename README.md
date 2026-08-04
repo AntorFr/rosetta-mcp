@@ -10,6 +10,7 @@ Like the stone: one endpoint, and every agent reads it in its own tongue.
 agent ──Bearer JWT──►  https://rosetta.example.com/maps/      (Google Maps, Places, Weather)
                        https://rosetta.example.com/meteo/     (Open-Meteo, wind for sailing)
                        https://rosetta.example.com/transit/   (SNCF + IDFM/Navitia)
+                       https://rosetta.example.com/trace/     (BRouter + Overpass, walks on OSM)
                        https://rosetta.example.com/<addon>/   (drop a module in, it mounts)
                        https://rosetta.example.com/health     (unauthenticated, per-addon state)
 ```
@@ -135,6 +136,59 @@ and collapses the daylight window). Bearings are averaged as a **circular**
 mean, because 350° and 10° average to north, not to south. The data is
 **CC-BY 4.0**, so every answer names its source).
 
+Last, `trace` (walking and hiking routes over OpenStreetMap, **no key, no
+account**: `trace_calcule` routes an ordered list of points on foot or by bike
+through [BRouter](https://brouter.de), and `trace_pois` finds what a walker
+needs — drinking water, viewpoints, shelters, benches, waymarked trails —
+through Overpass. Sightseeing landmarks stay with `search_places` in `maps`:
+ratings, review *counts* and opening hours are Google's and OSM has no
+equivalent, so the two sources meet in the caller's own file, field by field,
+each keeping its provenance).
+
+Its design rule is that **the geometry never travels through the model**:
+`trace_calcule` answers with the numbers — distance, D+/D−, surfaces, metres of
+steps, per-leg distances, and how far each requested point fell from the track
+— plus a URL. `GET /trace/geometrie` then returns the track
+[polyline-encoded](https://developers.google.com/maps/documentation/utilities/polylinealgorithm)
+for the caller to write straight to disk. A 3 km town loop is 328 points and
+13 kB of GPX; retyped by a language model, one dropped character shifts the
+whole tail of the walk. The route is **stateless** — the URL carries the same
+parameters, so it recomputes rather than reading a cache that would need a
+lifetime, a size and a replica count.
+
+Four upstream behaviours drive it, all measured against the live services on
+2026-08-04 rather than read off the docs:
+
+- BRouter takes **`lon,lat`** pairs, the reverse of every other tool here. The
+  flip lives in exactly one function, because getting it wrong yields a
+  plausible route in the wrong hemisphere rather than an error.
+- Its failures are **not JSON**: an unroutable pair is HTTP 400 with a
+  plain-text body (`target island detected for section 0`), an unknown profile
+  is HTTP 500 with an **empty** one. Parsing before checking the status turns a
+  usable message into a decoding traceback. Profile names are case-sensitive,
+  the only foot profile is `hiking-beta`, and `trekking` is a **bicycle**
+  profile despite the name.
+- Ascent is computed here with a **5 m hysteresis filter**, one method for both
+  directions so a loop reports the same figure twice. Raw accumulation inflated
+  a real 9.5 km Chartreuse loop from 378 m to 506 m.
+- Overpass emits in its own order and truncates on a **pooled** limit, so
+  asking for `eau,vue,banc` around a town came back as benches only, with both
+  wanted types crowded out. Each type gets its own named set and its own limit,
+  and the answer is grouped by type.
+
+A requested point anchors to its nearest track vertex **searching forward
+only**, from the previous anchor. On a loop the last point *is* the first one,
+and a global nearest-vertex search snaps it back to index 0 — turning a final
+260 m stroll home into a 2 770 m leg measured the wrong way round the town.
+
+`altimetrie="ign"` re-profiles a track on IGN **RGE ALTI** (1 m grid over
+France, free, no key) instead of BRouter's own model. On that Chartreuse loop
+the two agreed to 1 %, so it is an option rather than the default — it earns
+its round trip only on fine terrain. Two IGN quirks: the service **resamples
+evenly along the line** instead of answering at the vertices it was given, and
+booleans must be sent as the **strings** `"true"` / `"false"` (a real JSON
+boolean is rejected with `BAD_PARAMETER`).
+
 Tool descriptions are intentionally in **French**: they are runtime UX for the
 French-speaking agents this hub serves, not documentation.
 
@@ -183,6 +237,10 @@ answers with a 307 redirect.
 | `WITHINGS_CLIENT_ID`, `WITHINGS_CLIENT_SECRET` | - | `withings` addon: the OAuth app registered on the Withings developer dashboard |
 | `ROSETTA_WITHINGS_DATA` | `/data/withings` | `withings` addon: per-user credential store (volume) |
 | `OFF_USER_AGENT` | `Alfred/1.0 (contact@antor.fr)` | `food` addon: Open Food Facts requires a custom User-Agent naming the app, or treats the caller as a bot |
+| `BROUTER_URL` | `https://brouter.de/brouter` | `trace` addon: routing engine. The public instance is a courtesy service with no SLA; self-hosting (`abrensch/brouter` + the `segments4` tiles for the area) is a URL change, never a rewrite — which is why it is read per call |
+| `OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | `trace` addon: OSM point lookups. The quota is counted per **IP**, i.e. per deployment — one grouped request per call, never a loop |
+| `OVERPASS_USER_AGENT` | `rosetta-mcp/trace (contact@antor.fr)` | `trace` addon: Overpass expects a descriptive agent naming a contact |
+| `IGN_ALTI_URL` | `https://data.geopf.fr/altimetrie/…/elevationLine.json` | `trace` addon: IGN Géoplateforme elevation, used only when a call asks for `altimetrie="ign"`. Free, keyless, France only |
 | `ROSETTA_WIND_SPOTS` | *(empty)* | `meteo` addon: named sailing spots as JSON, `{"La Torche": "47.8367,-4.3492"}` or `{"La Torche": {"latlng": "…", "note": "…"}}`. Read per call, so adding a spot is a rollout, not a rebuild; a malformed entry is logged and skipped rather than taking the registry down |
 | `TZ` | `Europe/Paris` | local zone used to resolve bare `YYYY-MM-DD` bounds (and, in `meteo`, only to decide what "today" means - forecasts use the spot's own zone) |
 
