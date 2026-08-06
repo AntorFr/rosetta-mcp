@@ -11,6 +11,7 @@ agent ──Bearer JWT──►  https://rosetta.example.com/maps/      (Google 
                        https://rosetta.example.com/meteo/     (Open-Meteo, wind for sailing)
                        https://rosetta.example.com/transit/   (SNCF + IDFM/Navitia)
                        https://rosetta.example.com/trace/     (BRouter + Overpass, walks on OSM)
+                       https://rosetta.example.com/marees/    (tide times + coefficient, France)
                        https://rosetta.example.com/<addon>/   (drop a module in, it mounts)
                        https://rosetta.example.com/health     (unauthenticated, per-addon state)
 ```
@@ -189,6 +190,32 @@ evenly along the line** instead of answering at the vertices it was given, and
 booleans must be sent as the **strings** `"true"` / `"false"` (a real JSON
 boolean is rejected with `BAD_PARAMETER`).
 
+And `marees` (French tide **times** and **coefficient** — nothing else: no
+height curve, no range, no threshold windows, no nautical routing. The two
+questions it answers are "is the foreshore walkable at three?" and "will the
+golfe run hard on Saturday?", and both need a handful of times and one number).
+
+⚠️ **The coefficient is not local.** It is computed for the port of **Brest**
+and holds identically along the Channel and Atlantic coasts, the tidal wave
+reaching them barely distorted. What varies with place is the TIMES. The same
+100 means ~6 m of range at Brest, over 13 m at Mont-Saint-Michel, and 0.5 m in
+the Mediterranean — where the notion is meaningless. Hence the shape of every
+answer: one coefficient per tide, times per port.
+
+Source: [api-maree.fr](https://api-maree.fr), computing water levels from the
+Ifremer/PREVIMER harmonic constituents — free, one account key, 360 requests
+per hour, window bounded to **J−30 → J+30**. Its coefficient is stated by the
+source itself as **non-official**: the authority is the Shom, which *sells* its
+SPM/SAPM service. Good enough to decide a walk or a session, not good enough
+for anything where the official figure is binding — and every answer says so.
+
+Two guards live in the code rather than only in this file: the **distance** to
+the reference port is always returned and flagged past 25 km (a port 50 km away
+does not predict your foreshore), and a date outside J±30 is **refused** rather
+than extrapolated. A place is resolved by name against the 131 known ports
+first, then through the keyless **IGN geocoder** — no third key for a question
+that is already answered by open data.
+
 Tool descriptions are intentionally in **French**: they are runtime UX for the
 French-speaking agents this hub serves, not documentation.
 
@@ -241,6 +268,7 @@ answers with a 307 redirect.
 | `OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | `trace` addon: OSM point lookups. The quota is counted per **IP**, i.e. per deployment — one grouped request per call, never a loop |
 | `OVERPASS_USER_AGENT` | `rosetta-mcp/trace (contact@antor.fr)` | `trace` addon: Overpass expects a descriptive agent naming a contact |
 | `IGN_ALTI_URL` | `https://data.geopf.fr/altimetrie/…/elevationLine.json` | `trace` addon: IGN Géoplateforme elevation, used only when a call asks for `altimetrie="ign"`. Free, keyless, France only |
+| `API_MAREE_KEY` | - | `marees` addon: free account key from api-maree.fr (360 req/h). Absent = the addon mounts **degraded** and says so, the hub stays up |
 | `ROSETTA_WIND_SPOTS` | *(empty)* | `meteo` addon: named sailing spots as JSON, `{"La Torche": "47.8367,-4.3492"}` or `{"La Torche": {"latlng": "…", "note": "…"}}`. Read per call, so adding a spot is a rollout, not a rebuild; a malformed entry is logged and skipped rather than taking the registry down |
 | `TZ` | `Europe/Paris` | local zone used to resolve bare `YYYY-MM-DD` bounds (and, in `meteo`, only to decide what "today" means - forecasts use the spot's own zone) |
 

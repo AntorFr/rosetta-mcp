@@ -1,6 +1,50 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-08-04
+> MàJ : 2026-08-06
+
+**`marees` — les horaires et le coefficient, 0.13.0 ÉCRITE, PAS DÉPLOYÉE (2026-08-06)** :
+la skill `balades` d'Alfred disait « marée si le parcours touche l'estran — tu n'as pas
+d'outil, dis-le plutôt que de deviner ». Voilà l'outil. Périmètre **volontairement étroit**,
+fixé par Monsieur : les **heures** et le **coefficient**, rien d'autre — pas de courbe de
+hauteurs, pas de marnage, pas de seuils, pas de planification nautique. Deux questions,
+deux seulement : « l'estran est-il découvert à 15 h ? » et « ça va tirer fort samedi ? ».
+
+⚠️ **LE COEFFICIENT N'EST PAS LOCAL — c'est la première chose vérifiée, et elle corrige la
+question posée.** Il est calculé pour le port de **Brest** et vaut identiquement sur la Manche
+et l'Atlantique (l'onde y arrive peu déformée). Ce qui varie avec le lieu, ce sont les
+**heures**. Le même 100 donne ~6 m de marnage à Brest, **plus de 13 m** au Mont-Saint-Michel et
+**0,5 m** en Méditerranée, où la notion n'a aucun sens. D'où la forme des réponses : un
+coefficient par marée, des heures par port.
+
+**Source : api-maree.fr** (niveaux calculés sur les composantes harmoniques Ifremer/PREVIMER).
+Gratuite, une clé de compte, 360 req/h, fenêtre **J−30 → J+30**. ⚠️ Son coefficient est déclaré
+**NON OFFICIEL par la source elle-même** : le Shom fait autorité et **vend** son service
+SPM/SAPM. Bon pour décider une sortie, pas pour un document qui engage — et chaque réponse le
+dit.
+
+**Le Shom a été écarté délibérément, pas par ignorance.** Son portail gratuit appelle bien un
+service interne (le bundle parle `coeff`, `hlt`, `wl`), mais s'en servir reviendrait à utiliser
+sans payer une API qu'ils commercialisent. On n'a pas cherché la clé.
+
+Deux gardes **dans le code**, pas seulement dans la doc : la **distance au port** est toujours
+rendue et signalée au-delà de 25 km (un port à 50 km ne prédit pas votre estran), et une date
+**hors J±30 est refusée** au lieu d'être extrapolée — déborder en silence inventerait une marée.
+Un lieu est résolu d'abord sur les 131 ports connus, puis par le **géocodeur IGN** (sans clé) :
+pas de troisième clé pour une question que la donnée ouverte règle déjà.
+
+⚠️ **La forme exacte de `/tide-extrema` n'a PAS pu être observée** — la clé appartient à
+Monsieur. Le parseur lit donc plusieurs orthographes plausibles et, s'il ne reconnaît rien,
+**remonte la charge brute** au lieu de rendre un objet vide : un silence serait indébogable.
+Le premier appel réel tranchera.
+
+**Reste à faire :**
+- [ ] **Monsieur crée le compte gratuit** sur api-maree.fr → `API_MAREE_KEY` dans le manifeste.
+      Sans elle l'addon monte **degraded** et le dit ; le hub reste debout.
+- [ ] Publier 0.13.0 — **bloqué : GitHub Actions en panne majeure** depuis le 2026-08-06 15h22.
+- [ ] Vérifier `/tide-extrema` **par le pont** au premier appel avec une vraie clé.
+- [ ] Côté cerveau : retirer de la skill `balades` la phrase « tu n'as pas d'outil de marée ».
+
+> MàJ précédente : 2026-08-04
 
 **`trace` — les balades sur OpenStreetMap, 0.12.0 ÉCRITE, PAS ENCORE DÉPLOYÉE
 (2026-08-04)** : Alfred fabriquait ses GPX à la main — il tapait les 328 `<trkpt>` de la
