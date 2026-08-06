@@ -1,10 +1,11 @@
 """marees addon: la fenêtre du modèle, le port lointain, et le coefficient qui
 n'est pas local.
 
-⚠️ La forme exacte de `/tide-extrema` n'a PAS pu être observée : la clé
-appartient à l'utilisateur (compte gratuit api-maree.fr). Les tests jouent donc
-la forme documentée, et vérifient surtout que l'addon ne rend jamais un silence
-— si la charge ne correspond pas, elle doit remonter telle quelle.
+La charge de `/tide-extrema` reproduite ici est la VRAIE, relevée sur le service
+le 2026-08-06 (Auray, 7-8 août 2026). Elle a démenti la forme supposée : `data`
+est une liste de JOURS portant chacun ses `extrema`, les heures sont déjà en
+« HH:MM » locales, et le coefficient s'appelle `coef`. D'où ces fixtures : un
+test écrit contre une forme devinée ne prouve rien.
 
 Tout est mocké (httpx.MockTransport, aucun réseau).
 """
@@ -41,11 +42,22 @@ SITES = {"sites": [
     {"site_id": "brest", "site_name": "Brest", "latitude": 48.3833, "longitude": -4.4833},
 ]}
 
-EXTREMA = {"extrema": [
-    {"type": "PM", "time": "2026-08-07T06:12:00", "height": 4.9, "coefficient": 78},
-    {"type": "BM", "time": "2026-08-07T12:31:00", "height": 1.2},
-    {"type": "PM", "time": "2026-08-07T18:38:00", "height": 5.1, "coefficient": 81},
-]}
+# La vraie réponse du service, Auray, 7-8 août 2026 (verbatim, `source` élaguée).
+EXTREMA = {
+    "site_id": "auray-st-goustan", "site_name": "Auray (St-Goustan)",
+    "timezone": "Europe/Paris", "unit": "m",
+    "source": {"attribution": "Données de marée fournies par <a href=\"https://api-maree.fr/\">"
+                              "api-maree.fr</a> sous licence CC BY."},
+    "data": [
+        {"date": "2026-08-07", "extrema": [
+            {"type": "BM", "time": "06:12", "height": 1.681},
+            {"type": "PM", "time": "12:34", "height": 3.846, "coef": 47},
+            {"type": "BM", "time": "18:47", "height": 1.757}]},
+        {"date": "2026-08-08", "extrema": [
+            {"type": "PM", "time": "01:28", "height": 3.883, "coef": 45},
+            {"type": "BM", "time": "07:25", "height": 1.752}]},
+    ],
+}
 
 
 def serve(routes, capture=None):
@@ -108,11 +120,11 @@ def test_le_port_le_plus_proche_et_sa_distance():
     assert "avertissement" not in out
 
 
-def test_un_port_lointain_est_signale():
-    """Un port à 50 km ne prédit pas votre estran — et le silence serait pire."""
+def test_un_port_un_peu_loin_est_signale():
+    """Entre 25 et 100 km, on répond mais on le dit : les heures décalent."""
     serve(NOMINAL)
-    out = run(marees.marees("46.20,-1.55"))            # La Rochelle, loin des 3 ports mockés
-    assert out["distance_km"] > marees.LOIN_KM
+    out = run(marees.marees("47.30,-2.30"))            # ~50 km d'Auray
+    assert marees.LOIN_KM < out["distance_km"] < marees.TROP_LOIN_KM
     assert "km" in out["avertissement"]
 
 
@@ -144,11 +156,31 @@ def test_heures_et_coefficient():
     out = run(marees.marees("47.615,-2.918", jour="2026-08-07"))
     jour = out["jours"][0]
     assert jour["date"] == "2026-08-07"
-    assert [m["type"] for m in jour["marees"]] == ["pleine mer", "basse mer", "pleine mer"]
-    assert [m["heure"] for m in jour["marees"]] == ["06:12", "12:31", "18:38"]
-    # Le coefficient est porté par les pleines mers, et par elles seules.
-    assert jour["marees"][0]["coefficient"] == 78
-    assert "coefficient" not in jour["marees"][1]
+    assert [m["type"] for m in jour["marees"]] == ["basse mer", "pleine mer", "basse mer"]
+    assert [m["heure"] for m in jour["marees"]] == ["06:12", "12:34", "18:47"]
+    # ⚠️ Le coefficient s'appelle `coef` en amont, et ne porte QUE les pleines mers.
+    assert jour["marees"][1]["coefficient"] == 47
+    assert "coefficient" not in jour["marees"][0]
+
+
+def test_attribution_CC_BY_reprise_et_denudee_de_son_HTML():
+    """La donnée est en CC BY : l'attribution est la CONDITION de la licence,
+    pas une politesse. On repasse celle de la source, sans ses balises."""
+    serve(NOMINAL)
+    out = run(marees.marees("47.615,-2.918"))
+    assert "api-maree.fr" in out["attribution"] and "CC BY" in out["attribution"]
+    assert "<a href" not in out["attribution"]
+
+
+def test_une_autre_mer_est_REFUSEE_pas_avertie():
+    """Sans ce refus, « Sète » rendait les marées de Bordeaux, à 389 km et sur
+    une autre mer, sous un simple avertissement « ordre de grandeur ». Le
+    registre ne contient aucun port méditerranéen (vérifié le 2026-08-06)."""
+    serve(NOMINAL)
+    out = run(marees.marees("43.40,3.69"))            # Sète
+    assert "aucun port de référence" in out["error"]
+    assert "Méditerranée" in out["error"]
+    assert "jours" not in out
 
 
 def test_le_coefficient_est_toujours_etiquete_non_officiel():
@@ -161,11 +193,10 @@ def test_le_coefficient_est_toujours_etiquete_non_officiel():
 
 
 def test_plusieurs_jours_sont_groupes():
-    serve([("/sites", httpx.Response(200, json=SITES)),
-           ("/tide-extrema", httpx.Response(200, json={"extrema": EXTREMA["extrema"] + [
-               {"type": "PM", "time": "2026-08-08T07:02:00", "coefficient": 84}]}))])
+    serve(NOMINAL)
     out = run(marees.marees("47.615,-2.918", jour="2026-08-07", jours=2))
     assert [j["date"] for j in out["jours"]] == ["2026-08-07", "2026-08-08"]
+    assert out["jours"][1]["marees"][0]["coefficient"] == 45
 
 
 def test_une_forme_inattendue_remonte_la_charge_brute():

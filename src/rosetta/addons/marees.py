@@ -56,7 +56,14 @@ API = "https://api-maree.fr"
 # communes françaises — c'est tout ce qu'il faut pour tomber sur le bon port.
 IGN_GEOCODE = "https://data.geopf.fr/geocodage/search"
 FENETRE_J = 30                     # la fenêtre du modèle amont, en jours
-LOIN_KM = 25                       # au-delà, le port ne parle plus de votre plage
+LOIN_KM = 25                       # au-delà, le port ne parle plus tout à fait de votre plage
+# Au-delà, il n'en parle plus DU TOUT. Les 131 ports du registre couvrent la
+# Manche, l'Atlantique et la mer du Nord — pas un seul en Méditerranée (vérifié
+# le 2026-08-06). Sans ce seuil, « Sète » rendait les marées de **Bordeaux**, à
+# 389 km et sur une autre mer, avec un simple avertissement « ordre de
+# grandeur » — ce qui est faux : ce n'est pas un ordre de grandeur, c'est autre
+# chose. Un refus vaut mieux qu'un chiffre poli.
+TROP_LOIN_KM = 100
 
 _LATLNG = re.compile(r"^\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -247,6 +254,11 @@ async def marees(lieu: str, jour: str | None = None, jours: int = 1) -> dict:
         if isinstance(sites, str):
             return {"error": sites}
         port, distance = _proche(sites, lat, lng)
+        if distance > TROP_LOIN_KM:
+            return {"error": f"aucun port de référence près de « {libelle} » : le plus proche "
+                             f"est {port['site_name']}, à {round(distance)} km. Le registre "
+                             f"couvre la Manche, l'Atlantique et la mer du Nord — la "
+                             f"Méditerranée n'y figure pas."}
         try:
             r = await client.get(f"{API}/tide-extrema", params={
                 "site": port["site_id"], "from": debut, "to": fin,
@@ -274,29 +286,37 @@ async def marees(lieu: str, jour: str | None = None, jours: int = 1) -> dict:
         detail = data.get("detail") if isinstance(data, dict) else None
         return {"error": f"api-maree.fr : HTTP {r.status_code}{f' — {detail}' if detail else ''}"}
 
-    brut = data.get("extrema") or data.get("tide_extrema") or data.get("data") or data
-    entrees = brut if isinstance(brut, list) else []
+    # Forme réelle, relevée sur le service le 2026-08-06 : `data` est une liste
+    # de JOURS, chacun portant sa `date` et sa liste d'`extrema`. Les heures y
+    # sont déjà en « HH:MM » local (pas d'ISO à découper), et le coefficient
+    # s'appelle `coef`. Il ne porte que sur les pleines mers.
     par_jour: dict[str, list] = {}
-    for e in entrees:
-        if not isinstance(e, dict):
+    for j in data.get("data") or []:
+        if not isinstance(j, dict):
             continue
-        m = _range(e)
-        d = _jour(e.get("time") or e.get("datetime") or e.get("date")) or debut
-        par_jour.setdefault(d, []).append(m)
+        d = j.get("date") or debut
+        for e in j.get("extrema") or []:
+            if isinstance(e, dict):
+                par_jour.setdefault(d, []).append(_range(e))
 
+    # ⚠️ La donnée est en CC BY : l'attribution n'est pas une politesse, c'est la
+    # condition de la licence. On repasse celle que la source fournit elle-même,
+    # telle quelle, plutôt que d'en rédiger une approximation.
+    attribution = (data.get("source") or {}).get("attribution")
     out = {
         "lieu": libelle,
         "port": port["site_name"],
         "distance_km": round(distance, 1),
-        "source": "api-maree.fr (composantes harmoniques Ifremer/PREVIMER)",
+        "source": "api-maree.fr (composantes harmoniques Ifremer/PREVIMER, CC BY)",
+        "attribution": re.sub(r"<[^>]+>", "", attribution) if attribution else None,
         "coefficient_note": "coefficient NON OFFICIEL, calculé pour Brest — il vaut pour la "
                             "Manche et l'Atlantique, et n'a aucun sens en Méditerranée. "
                             "Le Shom fait autorité.",
     }
     # Un port lointain ne prédit pas votre estran : on le dit, on ne le devine pas.
     if distance > LOIN_KM:
-        out["avertissement"] = (f"le port le plus proche est à {round(distance)} km : les heures "
-                                f"peuvent décaler nettement, à prendre comme un ordre de grandeur.")
+        out["avertissement"] = (f"le port de référence est à {round(distance)} km : les heures "
+                                f"décalent avec la distance, à vérifier si la minute compte.")
     if not par_jour:
         # Plutôt qu'un objet vide, on rend ce que l'amont a dit : un silence
         # serait indébogable, et la forme exacte n'a pas pu être observée ici.

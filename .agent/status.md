@@ -32,16 +32,29 @@ rendue et signalée au-delà de 25 km (un port à 50 km ne prédit pas votre est
 Un lieu est résolu d'abord sur les 131 ports connus, puis par le **géocodeur IGN** (sans clé) :
 pas de troisième clé pour une question que la donnée ouverte règle déjà.
 
-⚠️ **La forme exacte de `/tide-extrema` n'a PAS pu être observée** — la clé appartient à
-Monsieur. Le parseur lit donc plusieurs orthographes plausibles et, s'il ne reconnaît rien,
-**remonte la charge brute** au lieu de rendre un objet vide : un silence serait indébogable.
-Le premier appel réel tranchera.
+**VÉRIFIÉ SUR LE SERVICE VIVANT le 2026-08-06**, avec une clé de test que Monsieur a fournie
+puis fait tourner. Trois enseignements, dont deux corrigent le code :
+
+1. ⚠️ **La forme supposée était fausse.** `data` est une liste de **JOURS** portant chacun ses
+   `extrema` ; les heures sont déjà en « HH:MM » locales, et le coefficient s'appelle **`coef`**.
+   Le parseur tolérant a fait exactement son office (il aurait remonté la charge brute au lieu
+   d'un objet vide) et les fixtures sont désormais la **vraie** réponse, pas une devinette.
+2. ⚠️ **« Sète » rendait les marées de BORDEAUX**, à 389 km et sur une autre mer, sous un
+   avertissement « ordre de grandeur » — ce qui est faux : ce n'est pas un ordre de grandeur,
+   c'est autre chose. Les 131 ports couvrent Manche, Atlantique et mer du Nord, **aucun en
+   Méditerranée**. Au-delà de 100 km, c'est désormais un **refus** qui nomme la raison ; entre
+   25 et 100 km, un avertissement.
+3. **La donnée est en CC BY** : l'attribution est la condition de la licence, pas une politesse.
+   Celle de la source est reprise telle quelle (débarrassée de son HTML) dans chaque réponse.
+
+**Et la donnée confirme la documentation.** Le 7 août 2026, coefficient **47 à Brest, 47 à
+Auray, 47 à Saint-Malo** — identique, comme annoncé. Les hauteurs, elles, vont de 3,85 m à
+9,79 m. C'est exactement l'écart que la note « le coefficient n'est pas local » décrit.
 
 **Reste à faire :**
-- [ ] **Monsieur crée le compte gratuit** sur api-maree.fr → `API_MAREE_KEY` dans le manifeste.
-      Sans elle l'addon monte **degraded** et le dit ; le hub reste debout.
+- [ ] **La clé au coffre** puis dans le manifeste (`API_MAREE_KEY`). Compte créé, clé de test
+      validée puis tournée par Monsieur. Sans clé l'addon monte **degraded** et le dit.
 - [ ] Publier 0.13.0 — **bloqué : GitHub Actions en panne majeure** depuis le 2026-08-06 15h22.
-- [ ] Vérifier `/tide-extrema` **par le pont** au premier appel avec une vraie clé.
 - [ ] Côté cerveau : retirer de la skill `balades` la phrase « tu n'as pas d'outil de marée ».
 
 > MàJ précédente : 2026-08-04
