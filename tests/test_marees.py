@@ -177,6 +177,22 @@ def test_une_forme_inattendue_remonte_la_charge_brute():
     assert "resultats" in out["reponse_brute"]
 
 
+def test_cle_refusee_le_dit_en_clair():
+    """Relevé sur le service vivant : 401 + {"error": "invalid_api_key"}.
+    Un « HTTP 401 » sec enverrait chercher le problème côté réseau."""
+    serve([("/sites", httpx.Response(200, json=SITES)),
+           ("/tide-extrema", httpx.Response(401, json={"error": "invalid_api_key"}))])
+    out = run(marees.marees("47.615,-2.918"))
+    assert "invalid_api_key" in out["error"] and "API_MAREE_KEY" in out["error"]
+
+
+def test_parametre_invalide_remonte_le_detail():
+    serve([("/sites", httpx.Response(200, json=SITES)),
+           ("/tide-extrema", httpx.Response(422, json={"detail": [
+               {"type": "missing", "loc": ["query", "key"], "msg": "Field required"}]}))])
+    assert "Field required" in run(marees.marees("47.615,-2.918"))["error"]
+
+
 def test_quota_atteint_est_une_information():
     serve([("/sites", httpx.Response(200, json=SITES)),
            ("/tide-extrema", httpx.Response(429, json={"detail": "rate limited"}))])

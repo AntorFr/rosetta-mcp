@@ -258,6 +258,16 @@ async def marees(lieu: str, jour: str | None = None, jours: int = 1) -> dict:
         except ValueError:
             return {"error": f"réponse illisible d'api-maree.fr : {(r.text or '')[:200]}"}
 
+    # Formes d'erreur relevées sur le service vivant le 2026-08-06 : une clé
+    # absente sort en 422 avec un `detail` de validation FastAPI, une clé fausse
+    # en 401 `{"error": "invalid_api_key"}`. Les deux se disent en clair — un
+    # « HTTP 401 » sec enverrait chercher le problème côté réseau.
+    if r.status_code == 401:
+        return {"error": "clé api-maree.fr refusée (invalid_api_key) : vérifier API_MAREE_KEY "
+                         "dans l'environnement du serveur."}
+    if r.status_code == 422:
+        return {"error": "requête refusée par api-maree.fr (paramètre manquant ou invalide) : "
+                         f"{str(data)[:200]}"}
     if r.status_code == 429:
         return {"error": "quota api-maree.fr atteint (360 requêtes/heure) : réessayer plus tard."}
     if r.status_code != 200:
