@@ -109,7 +109,8 @@ writing tool exists here — that absence is what stops an agent publishing into
 a public database on the user's behalf. Calls are rate-limited **in-process**
 because the upstream quota, 15 product reads and 10 searches per minute, is
 counted per **IP** — i.e. per deployment, shared with every other service
-behind the same egress — and exceeding it earns a ban for all of them).
+behind the same egress — and exceeding it earns a ban for all of them),
+`git` (a smart-HTTP proxy rather than a tool surface — see its own section below).
 Finally `meteo` (Open-Meteo: hour-by-hour **wind in knots** - mean, gust and
 gust ratio, bearing - for planning a sail. Like `food` it needs no key, no
 account and no enrolment, so it holds no secret and stays machine class.
@@ -228,6 +229,54 @@ Withings also answers **HTTP 200 for its failures**: the real outcome is the
 `status` field inside the JSON body, and a measure arrives as a `(value, unit)`
 pair where `unit` is a power of ten (`78192, -3` = 78.192 kg).
 
+### The `git` addon — a smart-HTTP proxy, not a tool surface
+
+`repo_commit` publishes file **contents**, passed inline in the tool call: an
+agent must retype every byte it wants to publish. Above a few kilobytes that is
+a lossy channel, and a corrupted retype rewrites a source file silently. The
+`git` addon removes the retyping entirely — the pod pushes real git, so the
+object that was verified is the object that gets published.
+
+It is therefore the one addon whose surface is **plain HTTP rather than MCP**:
+git's smart-HTTP endpoints, mounted per repository.
+
+```
+GET  /git/<owner>/<repo>/info/refs?service=git-receive-pack|git-upload-pack
+POST /git/<owner>/<repo>/git-receive-pack     # push
+POST /git/<owner>/<repo>/git-upload-pack      # fetch / clone
+```
+
+The caller authenticates with its ordinary hub token; the addon resolves that
+identity to the same GitHub App credential the `github` addon already refreshes,
+and streams the exchange to github.com. **The GitHub credential never leaves the
+hub** — which is the whole point: a pod can push without ever holding one, so a
+compromised agent cannot walk off with it.
+
+What it refuses, before a byte reaches GitHub:
+
+| Refused | Why |
+|---|---|
+| deleting any ref | destructive, and never needed from an agent |
+| a ref outside `refs/heads/*` and `refs/tags/*` | nothing else has business being pushed |
+| moving an existing tag | a tag is what a published image was built from |
+| a non-fast-forward push | see below |
+| `Content-Encoding` on a receive-pack body | it would blind the inspection |
+
+The non-fast-forward rule must not be mistaken for belt-and-braces. **The wire
+protocol carries no force flag**: the server decides by ancestry, and GitHub
+accepts a force-push on an unprotected branch. Relaying verbatim would therefore
+protect nothing — so the addon asks GitHub's `compare` endpoint itself and
+refuses anything that is not `ahead` or `identical`, and refuses too when the
+answer cannot be obtained rather than waving it through.
+
+Deciding *whether to push at all* is deliberately **not** here. Only the calling
+side can know whether a human is in front, so that judgement belongs to the git
+credential helper in the pod; this addon enforces what is visible on the wire.
+
+Only the ref rules are unconditional: `ROSETTA_GIT_REPOS` can additionally narrow
+the proxy to an explicit set of repositories, and is empty (no restriction) by
+default — the App's own installation scope is the outer bound.
+
 ## Authentication
 
 Rosetta is an OAuth 2.1 **resource server**. It stores no credentials and no
@@ -257,6 +306,7 @@ answers with a 307 redirect.
 | `ROSETTA_EXTERNAL_URL` | `https://rosetta.mcp.berard.me` | public URL (RFC 9728 metadata) |
 | `ROSETTA_JWKS_URI` | `<issuer>/jwks.json` | JWKS endpoint override |
 | `ROSETTA_ADDONS` | all discovered | comma-separated allowlist |
+| `ROSETTA_GIT_REPOS` | *(empty)* | `git` addon: optional `owner/name` allowlist for the smart-HTTP proxy. Empty = every repository the App can reach; the ref rules apply either way |
 | `GOOGLE_MAPS_API_KEY` | - | `maps` addon |
 | `SNCF_API_KEY`, `IDFM_API_KEY` | - | `transit` addon |
 | `ROSETTA_GMAIL_ACCOUNT` | `0` | `google` addon: account segment of the draft web links (`/mail/u/<this>/`) |

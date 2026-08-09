@@ -1,8 +1,50 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-08-06
+> MàJ : 2026-08-10
 
-**`marees` — les horaires et le coefficient, 0.13.0 ÉCRITE, PAS DÉPLOYÉE (2026-08-06)** :
+**`git` — le proxy smart-HTTP, 0.14.0 ÉCRITE, PAS DÉPLOYÉE (2026-08-10)** : le pod de Skippy
+savait écrire du code et pas le publier. `repo_commit` passe les **contenus en ligne** dans
+l'appel d'outil : publier 0.57.2 (186 Ko, dont un `main.py` de 72 Ko) lui demandait de retaper
+chaque octet de mémoire — canal lossy, et un caractère de travers réécrit la source en silence.
+Il a refusé, à raison ; c'est un humain qui a fini par extraire ses commits en `git bundle`.
+
+**Le correctif est de déplacer l'objet, pas le contenu.** Le pod pousse du vrai git vers le hub,
+qui relaie vers GitHub avec le jeton de l'App. **Le credential GitHub ne quitte jamais le hub** —
+l'invariant que `repo_commit` protégeait est intact, son coût a disparu. Seul addon dont la
+surface est du **HTTP nu** et non du MCP : `info/refs`, `git-receive-pack`, `git-upload-pack`.
+
+⚠️ **Le piège qui aurait rendu la garde décorative : le protocole ne porte AUCUN drapeau de
+force.** C'est le serveur qui tranche par ascendance, et **GitHub accepte un force-push sur une
+branche non protégée**. Relayer tel quel n'aurait donc rien protégé. Le proxy interroge lui-même
+`/compare` et refuse tout ce qui n'est pas `ahead`/`identical` — **et refuse aussi quand la
+réponse est indisponible**, plutôt que de laisser passer. Refus également : suppression de ref,
+ref hors `refs/heads/*`+`refs/tags/*`, déplacement d'un tag existant, et corps compressé sur
+receive-pack (il aveuglerait l'inspection).
+
+Les commandes sont lues en **pkt-line** en tête de corps, et **seul ce préfixe est bufferisé** —
+le pack lui-même est streamé sans jamais tenir en mémoire.
+
+**Décider s'il FAUT pousser n'est délibérément pas ici** : seul l'appelant sait si un humain est
+devant. Ce jugement appartient au credential helper côté pod (canal + bouclier), qui reste à
+écrire — c'est le lot 2. Trois couches, chacune gardant ce qu'elle voit.
+
+16 tests neufs, **218 au total au vert**. Collision `/git` vs `/github` vérifiée absente
+(`/github/enroll` atteint bien son addon).
+
+**Reste à faire :**
+- [ ] **Lot 2 — `git-credential-rosetta` côté agent-pods** : lit `GW_CHANNEL`, consomme le
+      bouclier en PWA (même endpoint que `google_guard.py`), refuse sec en `planif`, puis
+      seulement délivre le jeton. Le pod ne détient rien : contourner le helper, c'est se
+      retrouver sans credential
+- [ ] **Lot 3 — déployer** : tag `v0.14.0` → image GHCR multi-arch **vérifiée avant le bump** →
+      `clusters/tantive/home/mcp/rosetta-mcp-helm.yml`. Aucun secret, aucun ExternalSecret,
+      aucune route d'ingress neuve (l'ingress principal est un catch-all `/`)
+- [ ] e2e réel : pousser un commit d'essai sur un dépôt sans conséquence **avant** de basculer
+      les remotes des pods
+- [ ] Une fois éprouvé : côté Alfred, D46 se rediscute (elle est adossée à ce manque)
+
+**`marees` — les horaires et le coefficient, 0.13.0 DÉPLOYÉE (vérifié en prod le 2026-08-10 :
+`/health` → 9 addons `ok` en 0.13.0)** :
 la skill `balades` d'Alfred disait « marée si le parcours touche l'estran — tu n'as pas
 d'outil, dis-le plutôt que de deviner ». Voilà l'outil. Périmètre **volontairement étroit**,
 fixé par Monsieur : les **heures** et le **coefficient**, rien d'autre — pas de courbe de
