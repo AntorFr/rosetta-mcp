@@ -293,6 +293,15 @@ issued by an external OIDC provider (tested with
   addon), and every 401 carries the `WWW-Authenticate` pointer, so OAuth-aware
   MCP clients can discover the authorization server on their own.
 
+The token normally travels as `Authorization: Bearer`. A **Basic** header is
+accepted as an alternative envelope, taking the *password* as the token - which
+exists for exactly one caller: **git cannot be taught to send a Bearer header**,
+since a credential helper hands it a username and a password and nothing else
+(GitHub's own `x-access-token:<token>` convention). This widens the envelope, not
+the trust: the token inside faces the same signature, issuer, audience and expiry
+checks, and no `WWW-Authenticate: Basic` is ever emitted, so no browser is invited
+to prompt for one.
+
 Note the trailing slash: the MCP endpoint of an addon is `/<name>/` - `/<name>`
 answers with a 307 redirect.
 

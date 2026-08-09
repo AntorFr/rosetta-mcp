@@ -13,6 +13,7 @@ own, and every 401 carries the `WWW-Authenticate` header pointing to it.
 
 from __future__ import annotations
 
+import base64
 import os
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -34,6 +35,31 @@ MACHINE_SUB_PREFIX = "oauth2:client:"
 # `sub`). Set by the middleware; stateless HTTP keeps handling in-task, which a
 # dedicated test asserts.
 current_claims: ContextVar[dict | None] = ContextVar("rosetta_claims", default=None)
+
+
+def token_from_header(value: str) -> str:
+    """The access token carried by an `Authorization` header, or "".
+
+    Bearer is the normal envelope. Basic is accepted too, taking the PASSWORD as
+    the token, because **git cannot be taught to send a Bearer header**: a
+    credential helper hands it a username and a password, nothing else. This is
+    GitHub's own `x-access-token:<token>` convention, and it widens the envelope
+    only - the token inside is validated exactly like a Bearer one, by the same
+    signature, issuer and audience checks. No `WWW-Authenticate: Basic` is ever
+    emitted, so no browser is invited to prompt for one.
+    """
+    scheme, _, credential = value.partition(" ")
+    scheme = scheme.lower()
+    if scheme == "bearer":
+        return credential.strip()
+    if scheme == "basic":
+        try:
+            decoded = base64.b64decode(credential.strip(), validate=True).decode("utf-8")
+        except Exception:
+            return ""
+        _, sep, password = decoded.partition(":")
+        return password.strip() if sep else ""
+    return ""
 
 
 @dataclass(frozen=True)
@@ -106,15 +132,15 @@ class BearerJWTMiddleware:
             if name == b"authorization":
                 auth = value.decode("latin-1")
                 break
-        scheme, _, token = auth.partition(" ")
+        token = token_from_header(auth)
 
         error = None
         status = 401
-        if scheme.lower() != "bearer" or not token.strip():
+        if not token:
             error = "missing bearer token"
         else:
             try:
-                claims = self._decode(token.strip())
+                claims = self._decode(token)
             except Exception as exc:  # signature, issuer, audience, expiry...
                 error = f"invalid token: {type(exc).__name__}"
             else:

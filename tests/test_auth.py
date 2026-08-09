@@ -83,3 +83,44 @@ def test_expired_token_is_401(app, rsa_key):
     with TestClient(app) as client:
         r = client.get("/", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 401
+
+
+# --- Basic as an envelope: git cannot send a Bearer header (rosetta >= 0.14.0) ---
+
+def basic(token: str, user: str = "x-access-token") -> str:
+    import base64
+    return "Basic " + base64.b64encode(f"{user}:{token}".encode()).decode()
+
+
+def test_basic_carrying_the_same_jwt_passes(app, rsa_key):
+    with TestClient(app) as client:
+        r = client.get("/", headers={"Authorization": basic(sign(rsa_key))})
+    assert r.status_code == 200
+
+
+def test_basic_is_an_envelope_not_a_bypass(app, rsa_key):
+    # Same envelope, expired token: still refused. Basic widens how the token
+    # travels, never what is trusted.
+    token = sign(rsa_key, exp=int(time.time()) - 10)
+    with TestClient(app) as client:
+        r = client.get("/", headers={"Authorization": basic(token)})
+    assert r.status_code == 401
+
+
+def test_basic_without_a_password_is_refused(app):
+    import base64
+    header = "Basic " + base64.b64encode(b"someone-without-a-password").decode()
+    with TestClient(app) as client:
+        r = client.get("/", headers={"Authorization": header})
+    assert r.status_code == 401
+
+
+def test_unparsable_basic_is_refused_not_crashed(app):
+    with TestClient(app) as client:
+        r = client.get("/", headers={"Authorization": "Basic not-base64!!"})
+    assert r.status_code == 401
+
+
+def test_token_from_header_ignores_unknown_schemes():
+    assert auth_module.token_from_header("Digest abc") == ""
+    assert auth_module.token_from_header("") == ""

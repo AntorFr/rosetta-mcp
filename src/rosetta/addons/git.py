@@ -42,6 +42,11 @@ from .github import _access_token, _api, _current_sub, _slug
 
 mcp = new_server("git")
 
+# The GitHub App token is stored per human `sub` (shared with the `github` addon),
+# so a machine identity has nothing to resolve to. Declaring it here turns that
+# into a clean 403 at the door instead of a puzzling "not enrolled" further in.
+identity = "user"
+
 GITHUB_GIT = "https://github.com"
 UA = "rosetta-git-proxy"
 
