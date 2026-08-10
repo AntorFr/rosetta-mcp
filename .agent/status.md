@@ -2,7 +2,24 @@
 
 > MàJ : 2026-08-10
 
-**`git` — le proxy smart-HTTP, 0.14.0 ÉCRITE, PAS DÉPLOYÉE (2026-08-10)** : le pod de Skippy
+⚠️ **`git` — 0.14.0 DÉPLOYÉE ET MORTE À L'ARRIVÉE ; 0.14.1 la répare (2026-08-10)**. Le premier
+e2e réel — celui que la case ci-dessous réclamait — a été fait depuis le pod de Skippy et le
+proxy a répondu **401 `invalid credentials`** sur `info/refs`, hub parfaitement configuré.
+
+**Un token, deux portes, deux enveloppes.** `_github_headers()` posait `Authorization: Bearer`,
+ce qui est juste pour `api.github.com` et **faux** pour les endpoints smart-HTTP de
+`github.com`, qui n'acceptent **que** Basic `x-access-token:<token>`. Mesuré des deux côtés le
+même jour avec un PAT : Bearer → 401 `invalid credentials`, Basic → 200. C'est la symétrie
+exacte de ce que `auth.py` venait d'admettre à l'autre bout — git ne sait pas *envoyer* un
+Bearer, github.com ne sait pas en *recevoir* un ici.
+
+**Ce qui a rendu la panne illisible** : le proxy streame le statut ET le corps amont tels quels.
+Le refus de GitHub arrive donc dans le terminal du pousseur avec l'apparence d'un refus du hub —
+on soupçonne son propre jeton rosetta, qui est valide. Les 16 tests passaient : aucun ne
+regardait l'enveloppe envoyée en amont, seulement les refus. Un 17e la vérifie maintenant, et il
+échoue sur la 0.14.0.
+
+Le pod de Skippy
 savait écrire du code et pas le publier. `repo_commit` passe les **contenus en ligne** dans
 l'appel d'outil : publier 0.57.2 (186 Ko, dont un `main.py` de 72 Ko) lui demandait de retaper
 chaque octet de mémoire — canal lossy, et un caractère de travers réécrit la source en silence.
@@ -36,11 +53,12 @@ devant. Ce jugement appartient au credential helper côté pod (canal + bouclier
       bouclier en PWA (même endpoint que `google_guard.py`), refuse sec en `planif`, puis
       seulement délivre le jeton. Le pod ne détient rien : contourner le helper, c'est se
       retrouver sans credential
-- [ ] **Lot 3 — déployer** : tag `v0.14.0` → image GHCR multi-arch **vérifiée avant le bump** →
-      `clusters/tantive/home/mcp/rosetta-mcp-helm.yml`. Aucun secret, aucun ExternalSecret,
-      aucune route d'ingress neuve (l'ingress principal est un catch-all `/`)
-- [ ] e2e réel : pousser un commit d'essai sur un dépôt sans conséquence **avant** de basculer
-      les remotes des pods
+- [x] **Lot 3 — déployer** : fait, `v0.14.0` taggée et en prod (`/` → `git: ok` en 0.14.0)
+- [ ] **Redéployer en 0.14.1** : sans ce tag, le proxy reste inutilisable — il n'a jamais
+      publié un seul octet
+- [x] e2e réel : fait depuis le pod de Skippy, **et c'est lui qui a trouvé le bug**. La leçon
+      tient en une ligne : 218 tests au vert ne prouvaient pas qu'un seul push aboutissait
+- [ ] Refaire l'e2e après le redéploiement, avant de basculer les remotes des pods
 - [ ] Une fois éprouvé : côté Alfred, D46 se rediscute (elle est adossée à ce manque)
 
 **`marees` — les horaires et le coefficient, 0.13.0 DÉPLOYÉE (vérifié en prod le 2026-08-10 :

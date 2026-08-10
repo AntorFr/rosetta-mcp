@@ -6,6 +6,7 @@ push would silently accept a rewritten history.
 """
 
 import asyncio
+import base64
 import json
 
 import httpx
@@ -150,6 +151,28 @@ def test_an_unverifiable_ancestry_is_refused_not_waved_through(enrolled):
 def test_an_empty_command_list_is_refused(enrolled):
     github_api("ahead")
     assert run(git._check_commands("AntorFr/x", [])) is not None
+
+
+# --------------------------------------------------------------------------
+# The envelope handed upstream
+# --------------------------------------------------------------------------
+
+def test_the_upstream_credential_is_basic_not_bearer(enrolled):
+    """One token, two doors, two envelopes — and only one is right here.
+
+    `api.github.com` takes the App token as a Bearer; the smart-HTTP endpoints on
+    `github.com` take it ONLY as Basic `x-access-token:<token>` and answer a bare
+    401 `invalid credentials` otherwise. The proxy streams upstream status and
+    body straight through, so that refusal lands in the pusher's terminal looking
+    exactly like a hub refusal — which is what made the first push fail with a
+    hub that was, itself, perfectly configured.
+    """
+    github_api("ahead")
+    headers = run(git._github_headers())
+    scheme, _, credential = headers["Authorization"].partition(" ")
+    assert scheme == "Basic", "a Bearer here is a 401 nobody can debug from the pod"
+    user, _, token = base64.b64decode(credential).decode().partition(":")
+    assert (user, token) == ("x-access-token", "gho_live")
 
 
 # --------------------------------------------------------------------------

@@ -30,6 +30,7 @@ rewritten history.
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 
@@ -94,7 +95,15 @@ async def _github_headers() -> dict | JSONResponse:
     token = await _access_token(sub)
     if isinstance(token, dict):  # {'error': ...}
         return _refuse(token["error"])
-    return {"Authorization": f"Bearer {token}", "User-Agent": UA}
+    # Basic, PAS Bearer. Le même token ouvre les deux portes de GitHub, mais pas
+    # dans la même enveloppe : `api.github.com` veut un Bearer, les endpoints
+    # smart-HTTP de `github.com` n'acceptent QUE Basic `x-access-token:<token>`
+    # et répondent sinon un 401 « invalid credentials » — mesuré le 2026-08-10,
+    # relayé tel quel au pousseur, qui le lit comme un refus du hub.
+    # C'est la symétrie exacte de ce que `auth.py` fait à l'autre bout : git ne
+    # sait pas envoyer un Bearer, et github.com ne sait pas en recevoir un ici.
+    credential = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return {"Authorization": f"Basic {credential}", "User-Agent": UA}
 
 
 def _parse_commands(buffer: bytes) -> tuple[list[tuple[str, str, str]], bool]:
