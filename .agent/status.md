@@ -1,6 +1,80 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-08-10
+> MàJ : 2026-08-11
+
+**`vin` — 0.16.0 : LWIN, le référentiel des vins, ÉCRIT, NI DÉPLOYÉ NI NOURRI (2026-08-11)**.
+Premier morceau de la gestion de stock demandée pour la PWA (consommables + cave). Quatre
+outils, classe machine : `vin_recherche` (texte libre → candidats LWIN7), `vin_lwin`
+(décoder un 7/11/16/18 et le résoudre), `vin_code` (composer le code d'une bouteille
+précise) et `vin_base` (d'où vient la base, de quand elle date).
+
+**Pourquoi pas l'EAN, qui était la question de départ.** Un code-barres est une mauvaise clé
+pour une cave : beaucoup de vignerons n'en portent aucun, et ceux qui en portent **réutilisent
+le même d'un millésime à l'autre** — le scan rend « Château X, 75 cl » et perd précisément
+l'attribut sur lequel une cave est bâtie. LWIN est l'identifiant du métier, il est
+hiérarchique (vin → millésime → contenant → lot), et Liv-ex publie toute la base en Creative
+Commons. L'EAN reste un raccourci d'entrée, pas la colonne vertébrale.
+
+⚠️ **Il n'existe aucune API LWIN publique — mesuré, pas supposé.** `api.liv-ex.com/lwin/
+search/v1/lwinSearch` est ce que le site LWIN appelle lui-même ; sans jeton de compte Liv-ex
+il répond **401** (essayé le 2026-08-11). L'addon ne téléphone donc **jamais** : sa surface
+réseau est vide. Il lit le fichier téléchargé, gratuit mais derrière une inscription — donc
+**un dépôt manuel de Monsieur**, comme le kubeconfig. Sans `LWIN_DB`, l'addon monte
+`degraded` et chaque outil dit en français où prendre le fichier.
+
+**Trois pièges, tous vérifiés sur le LWIN Guide v1.2 ou sur un exemple publié par Liv-ex, et
+les trois échouent en silence :**
+
+1. **La base ne porte AUCUN diacritique.** Le guide l'écrit noir sur blanc : é, ø, å, ç, ñ, ß
+   ne sont pas supportés, « Spätlese » y est rangé « Spatlese », Prüm en « Prum ». Un
+   utilisateur français tape ses accents et un `LIKE` naïf ne trouve rien **sur une base qui
+   contient le vin**. Les deux côtés sont donc repliés — et le repli couvre les lettres que
+   NFKD ne décompose pas (ø, ß, æ, œ, đ, ł), qui sont exactement celles des étiquettes
+   allemandes et nordiques.
+2. **Un LWIN18 n'est pas un LWIN16 suivi de deux chiffres.** Le nombre de bouteilles s'insère
+   **au milieu**, entre le millésime et le contenant. L'exemple de Liv-ex, Léoville Barton
+   2009 : 75 cl → `1012361 2009 00750`, caisse de 12 → `1012361 2009 12 00750`. Ajouter le
+   lot à la fin fabrique un code parfaitement bien formé qui **désigne une autre bouteille**
+   (7 litres par caisse de 75) — un test le montre plutôt que de le raconter.
+3. **Le contenant tient sur 5 chiffres de millilitres à zéros de tête** (`00750`), le
+   millésime sur 4. Un code passé par un entier a perdu ses zéros et ment. Même maladie en
+   amont : un export Excel→CSV mange le zéro de tête d'un LWIN7, donc les codes trop courts
+   sont **re-complétés** au lieu d'être rejetés. Des pages tierces décrivent ce champ en
+   centilitres ; l'exemple de Liv-ex dit millilitres, et l'exemple tranche.
+
+**Et une honnêteté, pas un piège** : un LWIN11 composé ici est structurellement juste, ce qui
+n'est **pas** « enregistré chez Liv-ex » — leur validation se fait un millésime à la fois.
+D'où `millesime_douteux`, adossé à `vintage_config` et aux premier/dernier millésimes connus :
+une mise en garde, jamais un refus. Et le « NV » n'est **pas** synthétisé — le fichier est au
+niveau du vin et ne porte pas cette convention ; l'inventer serait une devinette déguisée en
+code.
+
+La base est **un instantané** : un vin absent peut simplement être postérieur au fichier, ce
+que `vin_base` date pour qu'on puisse dire « absent » avec le bon doute. Miroir SQLite
+reconstruit quand la taille ou la mtime de la source bougent, **hors du dossier source** (un
+volume de dépôt manuel est souvent monté en lecture seule) et construit **paresseusement dans
+un thread** : 200 000 lignes n'ont rien à faire au moment de l'import d'un hub qui héberge
+douze addons. Nouvelle dépendance `openpyxl` (le téléchargement Liv-ex est un classeur Excel),
+importée mollement — une wheel manquante dégrade cet outil, jamais le hub.
+
+**25 tests neufs, 255 au total au vert**, addon découvert et monté (`vin: degraded — missing
+env: LWIN_DB` tant que le fichier n'est pas là, `ok` dès qu'il l'est). Tout tourne sur un CSV
+écrit par le test : aucun fichier versionné, aucun réseau.
+
+**Reste à faire :**
+- [ ] 🛡 **Publier ce travail** — écrit en local sur `main`, jamais poussé (tour `pwa`).
+- [ ] **Le fichier LWIN, geste de Monsieur** : compte gratuit sur `liv-ex.com/lwin/`,
+      télécharger la « LWIN database », la déposer sur un volume et poser `LWIN_DB` dessus.
+      **Tant que ce fichier n'est pas là, rien n'a été éprouvé sur des vraies données** — la
+      forme des colonnes vient du guide Liv-ex, pas d'un fichier ouvert.
+- [ ] **e2e réel après dépôt** : chercher un vin de la cave, décoder son code, en composer un.
+      C'est là que la tolérance d'en-tête (`_header_map`) se vérifiera pour de bon.
+- [ ] Tag `v0.16.0` + image + déploiement — geste de Monsieur.
+- [ ] **La suite du chantier stock**, non commencée : le bricolage n'a **pas** d'équivalent
+      LWIN. Le moins mauvais est Open Icecat (gratuit, GTIN, bon sur l'outillage de marque,
+      nul sur la quincaillerie en vrac) + saisie manuelle qui alimente une base locale. Et le
+      stock lui-même (quantités, mouvements, seuils) est de l'**état**, pas des fiches : ça se
+      décide côté PWA, pas ici.
 
 **`git` — 0.15.0 : le proxy publie enfin pour de bon (2026-08-10)**. La 0.14.1 avait réparé
 l'enveloppe d'auth ; il restait **deux pannes**, toutes deux trouvées en poussant pour de vrai

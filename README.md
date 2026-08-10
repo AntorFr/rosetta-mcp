@@ -12,6 +12,7 @@ agent ──Bearer JWT──►  https://rosetta.example.com/maps/      (Google 
                        https://rosetta.example.com/transit/   (SNCF + IDFM/Navitia)
                        https://rosetta.example.com/trace/     (BRouter + Overpass, walks on OSM)
                        https://rosetta.example.com/marees/    (tide times + coefficient, France)
+                       https://rosetta.example.com/vin/       (LWIN, the wine identifier - offline)
                        https://rosetta.example.com/<addon>/   (drop a module in, it mounts)
                        https://rosetta.example.com/health     (unauthenticated, per-addon state)
 ```
@@ -110,6 +111,26 @@ a public database on the user's behalf. Calls are rate-limited **in-process**
 because the upstream quota, 15 product reads and 10 searches per minute, is
 counted per **IP** — i.e. per deployment, shared with every other service
 behind the same egress — and exceeding it earns a ban for all of them),
+`vin` (**LWIN**, the Liv-ex wine identifier, for a cellar's inventory: free-text
+search over the base, decoding a LWIN7 / 11 / 16 / 18, and composing one from a
+wine + vintage + bottle size + pack. An EAN is a poor key for a cellar — many
+growers carry none, and those who do reuse the same code across vintages, losing
+the one attribute a cellar is built on — so the spine is LWIN and a barcode is at
+best a shortcut into it. **Zero network**: there is no public LWIN API
+(`api.liv-ex.com/lwin/search/v1/lwinSearch` answers 401 without a Liv-ex account,
+measured 2026-08-11), so the addon reads the file Liv-ex publishes under Creative
+Commons — a free but manual download, pointed at by `LWIN_DB`, absent of which
+the addon mounts `degraded` and says so. Mirrored into SQLite, rebuilt when the
+source's size or mtime moves, built lazily in a thread so 200 000 rows are never
+parsed at import time. Three traps drive the code, each verified against the
+LWIN Guide v1.2 or a published worked example: the base carries **no diacritics**
+at all — "Spatlese", "Prum" — so both sides are folded, including the letters
+NFKD does not decompose (ø, ß, æ, œ); a **LWIN18 is not a LWIN16 plus two
+digits**, the pack size is inserted *between* vintage and bottle size
+(`1012361 2009 12 00750`); and the bottle size is five zero-padded digits of
+**millilitres**, so a code that has been through an integer names a different
+bottle. A composed LWIN11 is reported as structurally valid, never as registered
+— Liv-ex approves vintages one by one — and "NV" is deliberately not synthesised),
 `git` (a smart-HTTP proxy rather than a tool surface — see its own section below).
 Finally `meteo` (Open-Meteo: hour-by-hour **wind in knots** - mean, gust and
 gust ratio, bearing - for planning a sail. Like `food` it needs no key, no
@@ -351,6 +372,8 @@ answers with a 307 redirect.
 | `WITHINGS_CLIENT_ID`, `WITHINGS_CLIENT_SECRET` | - | `withings` addon: the OAuth app registered on the Withings developer dashboard |
 | `ROSETTA_WITHINGS_DATA` | `/data/withings` | `withings` addon: per-user credential store (volume) |
 | `OFF_USER_AGENT` | `Alfred/1.0 (contact@antor.fr)` | `food` addon: Open Food Facts requires a custom User-Agent naming the app, or treats the caller as a bot |
+| `LWIN_DB` | - | `vin` addon: path to the LWIN database file (`.csv` or `.xlsx`), downloaded free from [liv-ex.com/lwin](https://www.liv-ex.com/lwin/) under Creative Commons. There is no API to fall back on, so this is a **manual deposit**; absent, the addon mounts `degraded` and every tool says where to get the file |
+| `LWIN_CACHE` | `<tmp>/rosetta-lwin-<hash>.sqlite` | `vin` addon: the SQLite mirror. Deliberately not beside the source — the volume carrying a hand-deposited file is routinely read-only |
 | `BROUTER_URL` | `https://brouter.de/brouter` | `trace` addon: routing engine. The public instance is a courtesy service with no SLA; self-hosting (`abrensch/brouter` + the `segments4` tiles for the area) is a URL change, never a rewrite — which is why it is read per call |
 | `OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | `trace` addon: OSM point lookups. The quota is counted per **IP**, i.e. per deployment — one grouped request per call, never a loop |
 | `OVERPASS_USER_AGENT` | `rosetta-mcp/trace (contact@antor.fr)` | `trace` addon: Overpass expects a descriptive agent naming a contact |
