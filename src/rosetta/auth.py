@@ -54,8 +54,11 @@ def token_from_header(value: str) -> str:
     credential helper hands it a username and a password, nothing else. This is
     GitHub's own `x-access-token:<token>` convention, and it widens the envelope
     only - the token inside is validated exactly like a Bearer one, by the same
-    signature, issuer and audience checks. No `WWW-Authenticate: Basic` is ever
-    emitted, so no browser is invited to prompt for one.
+    signature, issuer and audience checks.
+
+    A Basic *challenge* is emitted only under `_BASIC_CHALLENGE_PREFIXES` (i.e.
+    `/git/`, whose client is git and never a browser). Everywhere else the 401
+    still points at the RFC 9728 metadata, so no browser is invited to prompt.
     """
     scheme, _, credential = value.partition(" ")
     scheme = scheme.lower()
