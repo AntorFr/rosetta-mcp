@@ -2,9 +2,46 @@
 
 > MàJ : 2026-08-10
 
-⚠️ **`git` — 0.14.0 DÉPLOYÉE ET MORTE À L'ARRIVÉE ; 0.14.1 la répare (2026-08-10)**. Le premier
-e2e réel — celui que la case ci-dessous réclamait — a été fait depuis le pod de Skippy et le
-proxy a répondu **401 `invalid credentials`** sur `info/refs`, hub parfaitement configuré.
+**`git` — 0.15.0 : le proxy publie enfin pour de bon (2026-08-10)**. La 0.14.1 avait réparé
+l'enveloppe d'auth ; il restait **deux pannes**, toutes deux trouvées en poussant pour de vrai
+depuis le pod de Skippy, aucune visible depuis la suite de tests.
+
+**1. La garde anti-force-push interrogeait le mauvais oracle, et refusait tout.**
+`_check_commands` appelait `/compare/<old>...<new>` **avant** de relayer le pack — or `<new>`
+est précisément le commit qu'on pousse : GitHub répond `404`, lu comme « ascendance
+invérifiable », donc refus. **Toute mise à jour de branche existante était rejetée** ; seules
+les créations passaient. Les 16 tests ne l'ont pas vu : leur mock répondait `ahead` à n'importe
+quel sha, existant ou non — il validait une logique impossible en vrai.
+
+> **Le correctif inverse l'ordre et change d'arbitre.** Une mise à jour de branche est
+> streamée vers une ref jetable (`refs/heads/rosetta-scratch/<hex>`, créée depuis zéro : rien
+> n'y est écrasable), ce qui **fait exister les objets chez GitHub**. La vraie ref est ensuite
+> déplacée par `PATCH /git/refs/…` avec **`force: false`**, que GitHub refuse nativement si ce
+> n'est pas un fast-forward. La garantie vient désormais du serveur qui détient la branche, et
+> non d'une question posée trop tôt. Ref jetable supprimée dans un `finally`. Seul le préfixe
+> de commandes est réécrit : le pack continue de streamer sans être bufferisé.
+
+**2. Le hub n'émettait qu'un challenge `Bearer`.** Git ne sait pas le lire : il abandonne sur
+« Authentication failed » **sans jamais appeler son credential helper**. Un pod porteur d'un
+jeton valide ne pouvait donc pas pousser — et surtout, **le lot 2 était irréalisable** : le
+helper censé porter le canal et le bouclier n'aurait jamais été appelé, quel que soit son code.
+Un 401 sous `/git` répond maintenant `Basic realm="rosetta"` ; ailleurs, le pointeur RFC 9728
+ne bouge pas et aucun navigateur n'est invité à demander un mot de passe sur un endpoint MCP.
+
+Au passage : un refus revient désormais en **ligne `ng`** du report-status et non en HTTP 403.
+Une fois le pack en vol, git encapsule l'échange en side-band et le corps d'erreur n'atteint
+jamais l'utilisateur — qui ne voit que `RPC failed; HTTP 403`, sans motif. C'est ce qui a rendu
+le diagnostic pénible. Limite assumée : **un push ne met à jour qu'une ref à la fois**.
+
+**230 tests au vert.** Restent à écrire, faute de pouvoir les jouer ici : l'e2e réel contre
+GitHub après déploiement, et le nettoyage d'une ref `rosetta-scratch/` qu'un crash aurait
+laissée (aujourd'hui inoffensive, mais visible dans la liste des branches).
+
+<details><summary>Historique — 0.14.0 déployée et morte à l'arrivée, 0.14.1</summary>
+
+**0.14.0 : déployée, et morte à l'arrivée.** Le premier e2e réel — celui que la case plus bas
+réclamait — a été fait depuis le pod de Skippy et le proxy a répondu **401 `invalid
+credentials`** sur `info/refs`, hub parfaitement configuré.
 
 **Un token, deux portes, deux enveloppes.** `_github_headers()` posait `Authorization: Bearer`,
 ce qui est juste pour `api.github.com` et **faux** pour les endpoints smart-HTTP de
@@ -19,6 +56,8 @@ on soupçonne son propre jeton rosetta, qui est valide. Les 16 tests passaient :
 regardait l'enveloppe envoyée en amont, seulement les refus. Un 17e la vérifie maintenant, et il
 échoue sur la 0.14.0.
 
+</details>
+
 Le pod de Skippy
 savait écrire du code et pas le publier. `repo_commit` passe les **contenus en ligne** dans
 l'appel d'outil : publier 0.57.2 (186 Ko, dont un `main.py` de 72 Ko) lui demandait de retaper
@@ -32,11 +71,11 @@ surface est du **HTTP nu** et non du MCP : `info/refs`, `git-receive-pack`, `git
 
 ⚠️ **Le piège qui aurait rendu la garde décorative : le protocole ne porte AUCUN drapeau de
 force.** C'est le serveur qui tranche par ascendance, et **GitHub accepte un force-push sur une
-branche non protégée**. Relayer tel quel n'aurait donc rien protégé. Le proxy interroge lui-même
-`/compare` et refuse tout ce qui n'est pas `ahead`/`identical` — **et refuse aussi quand la
-réponse est indisponible**, plutôt que de laisser passer. Refus également : suppression de ref,
-ref hors `refs/heads/*`+`refs/tags/*`, déplacement d'un tag existant, et corps compressé sur
-receive-pack (il aveuglerait l'inspection).
+branche non protégée**. Relayer tel quel n'aurait donc rien protégé — d'où la promotion par ref
+jetable + `force: false` décrite en tête (la 0.14.x s'y prenait autrement, et refusait tout).
+Refus également : suppression de ref, ref hors `refs/heads/*`+`refs/tags/*`, déplacement d'un
+tag existant, push touchant plusieurs refs à la fois, et corps compressé sur receive-pack (il
+aveuglerait l'inspection).
 
 Les commandes sont lues en **pkt-line** en tête de corps, et **seul ce préfixe est bufferisé** —
 le pack lui-même est streamé sans jamais tenir en mémoire.
@@ -54,8 +93,13 @@ devant. Ce jugement appartient au credential helper côté pod (canal + bouclier
       seulement délivre le jeton. Le pod ne détient rien : contourner le helper, c'est se
       retrouver sans credential
 - [x] **Lot 3 — déployer** : fait, `v0.14.0` taggée et en prod (`/` → `git: ok` en 0.14.0)
-- [ ] **Redéployer en 0.14.1** : sans ce tag, le proxy reste inutilisable — il n'a jamais
-      publié un seul octet
+- [x] **Redéployer en 0.14.1** : fait, hub en 0.14.1 — mais il ne publiait toujours que des
+      branches neuves, d'où la 0.15.0
+- [ ] 🛡 **Tag `v0.15.0` + image + déploiement** : c'est ce qui rend le proxy réellement
+      utilisable. Geste de Monsieur
+- [ ] **Lot 2 débloqué, à écrire** : `git-credential-rosetta` est redevenu possible maintenant
+      que `/git` émet un challenge Basic. Tant qu'il n'existe pas, on pousse par
+      `http.extraHeader` — et **un push n'a alors aucune garde de canal**
 - [x] e2e réel : fait depuis le pod de Skippy, **et c'est lui qui a trouvé le bug**. La leçon
       tient en une ligne : 218 tests au vert ne prouvaient pas qu'un seul push aboutissait
 - [ ] Refaire l'e2e après le redéploiement, avant de basculer les remotes des pods

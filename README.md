@@ -259,15 +259,36 @@ What it refuses, before a byte reaches GitHub:
 | deleting any ref | destructive, and never needed from an agent |
 | a ref outside `refs/heads/*` and `refs/tags/*` | nothing else has business being pushed |
 | moving an existing tag | a tag is what a published image was built from |
-| a non-fast-forward push | see below |
+| a non-fast-forward push | see below — GitHub decides, `force: false` |
+| a push updating several refs at once | one promotion per request |
 | `Content-Encoding` on a receive-pack body | it would blind the inspection |
 
 The non-fast-forward rule must not be mistaken for belt-and-braces. **The wire
 protocol carries no force flag**: the server decides by ancestry, and GitHub
 accepts a force-push on an unprotected branch. Relaying verbatim would therefore
-protect nothing — so the addon asks GitHub's `compare` endpoint itself and
-refuses anything that is not `ahead` or `identical`, and refuses too when the
-answer cannot be obtained rather than waving it through.
+protect nothing.
+
+⚠️ **0.14.x asked the wrong oracle, and refused everything.** It called
+`/compare/<old>...<new>` *before* relaying the pack — but `<new>` is precisely
+the commit being pushed, so GitHub answered `404`, which the addon read as
+"ancestry unverifiable" and refused. Every update of an existing branch was
+rejected; only branch creations got through. The 16 tests missed it because their
+mock answered `ahead` for any sha, existing or not.
+
+**0.15.0 asks the only party that can answer, and asks it last.** A branch update
+is streamed to a throwaway ref (`refs/heads/rosetta-scratch/<hex>`, created from
+zero — nothing there can be overwritten), which lands the objects on GitHub.
+The real ref is then moved with `PATCH /git/refs/…` and **`force: false`**, which
+GitHub itself refuses unless the update is a fast-forward — the guarantee now
+comes from the server that owns the branch, not from a question asked too early.
+The scratch ref is dropped in a `finally`. Only the command prefix is rewritten,
+so the pack still streams without ever being buffered.
+
+Two consequences worth knowing. A push touching **several refs at once** is
+refused: one promotion per request. And a refusal now comes back as a git
+**`ng` line** in the report-status rather than an HTTP 403 — once the pack is
+flowing git wraps the exchange in a side-band and an error body never reaches
+the user, who sees only `RPC failed; HTTP 403` with no reason at all.
 
 Deciding *whether to push at all* is deliberately **not** here. Only the calling
 side can know whether a human is in front, so that judgement belongs to the git
@@ -299,8 +320,15 @@ exists for exactly one caller: **git cannot be taught to send a Bearer header**,
 since a credential helper hands it a username and a password and nothing else
 (GitHub's own `x-access-token:<token>` convention). This widens the envelope, not
 the trust: the token inside faces the same signature, issuer, audience and expiry
-checks, and no `WWW-Authenticate: Basic` is ever emitted, so no browser is invited
-to prompt for one.
+checks.
+
+The **challenge** had to follow, and only under `/git`: git does not understand a
+`Bearer` challenge, and faced with one it gives up on "Authentication failed"
+**without ever asking its credential helper** — so a pod holding a valid token
+could not push, and the helper meant to carry the channel and the shield could
+never have run. A 401 under `/git` therefore answers `Basic realm="rosetta"`;
+everywhere else the RFC 9728 pointer is unchanged, and no browser is ever invited
+to prompt on an MCP endpoint.
 
 Note the trailing slash: the MCP endpoint of an addon is `/<name>/` - `/<name>`
 answers with a 307 redirect.

@@ -33,10 +33,11 @@ from __future__ import annotations
 import base64
 import os
 import re
+import uuid
 
 import httpx
 from starlette.requests import Request
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from ._common import new_server
 from .github import _access_token, _api, _current_sub, _slug
@@ -63,6 +64,11 @@ def _client(read: float, write: float = 30.0, redirects: bool = False) -> httpx.
 
 # A ref update whose new value is all zeros is a deletion.
 _ZERO = "0" * 40
+
+# Where a pack lands before its ref is promoted (see `_promote`). Under
+# refs/heads/ because that is what receive-pack accepts without ceremony; the
+# name is dropped again as soon as the real ref has moved.
+_SCRATCH_PREFIX = "refs/heads/rosetta-scratch/"
 
 # Commands are pkt-lines; the pack that follows them can be arbitrarily large, so
 # only this prefix is ever buffered.
@@ -133,8 +139,14 @@ def _parse_commands(buffer: bytes) -> tuple[list[tuple[str, str, str]], bool]:
     return commands, False
 
 
-async def _check_commands(slug: str, commands: list[tuple[str, str, str]]) -> str | None:
-    """None if every ref update is allowed, else the reason to show the pusher."""
+def _check_commands(commands: list[tuple[str, str, str]]) -> str | None:
+    """None if every ref update is allowed, else the reason to show the pusher.
+
+    Purely syntactic, and deliberately so: ancestry is NOT decided here. Asking
+    GitHub `/compare/<old>...<new>` before relaying could never work — `<new>` is
+    precisely the commit being pushed, so GitHub answers 404 and every update of
+    an existing branch was refused as "unverifiable". See `_promote`.
+    """
     if not commands:
         return "aucune mise à jour de ref dans ce push."
     for old, new, ref in commands:
@@ -143,25 +155,58 @@ async def _check_commands(slug: str, commands: list[tuple[str, str, str]]) -> st
                     "Passer par l'interface GitHub si c'est vraiment voulu.")
         if not ref.startswith(("refs/heads/", "refs/tags/")):
             return f"ref « {ref} » hors périmètre : seuls refs/heads/* et refs/tags/* passent."
-        if ref.startswith("refs/tags/"):
+        if ref.startswith("refs/tags/") and old != _ZERO:
             # A tag is a release marker: creating one is fine, moving one rewrites
             # what a published image was built from.
-            if old != _ZERO:
-                return (f"le tag « {ref} » existe déjà et ce proxy ne déplace jamais un tag. "
-                        "Poser un nouveau tag plutôt que de réécrire celui-ci.")
-            continue
-        if old == _ZERO:
-            continue  # new branch: nothing to be non-fast-forward with
-        # The wire carries no force flag, so ancestry is asked of GitHub itself.
-        comparison = await _api("GET", f"/repos/{slug}/compare/{old}...{new}")
-        if "error" in comparison:
-            return (f"impossible de vérifier que « {ref} » avance sans réécrire "
-                    f"l'historique ({comparison['error']}) — refus par sécurité.")
-        if comparison.get("status") not in ("ahead", "identical"):
-            return (f"push non fast-forward sur « {ref} » (GitHub le voit "
-                    f"« {comparison.get('status')} ») : ce proxy ne force jamais. "
-                    "Rebaser sur origin, puis repousser.")
+            return (f"le tag « {ref} » existe déjà et ce proxy ne déplace jamais un tag. "
+                    "Poser un nouveau tag plutôt que de réécrire celui-ci.")
     return None
+
+
+def _pkt(payload: bytes) -> bytes:
+    """Encode one pkt-line (4 hex length chars covering themselves)."""
+    return b"%04x%s" % (len(payload) + 4, payload)
+
+
+def _after_flush(buffer: bytes) -> int:
+    """Offset just past the flush packet that closes the command list."""
+    i = 0
+    while i + 4 <= len(buffer):
+        length = int(buffer[i:i + 4], 16)
+        if length == 0:
+            return i + 4
+        i += length
+    return len(buffer)
+
+
+def _client_capabilities(buffer: bytes) -> set[bytes]:
+    """What the pusher announced, after the NUL on its first command."""
+    i = 0
+    while i + 4 <= len(buffer):
+        length = int(buffer[i:i + 4], 16)
+        if length == 0:
+            break
+        line = buffer[i + 4:i + length]
+        if b"\x00" in line:
+            return set(line.split(b"\x00", 1)[1].strip().split())
+        i += length
+    return set()
+
+
+def _report(caps: set[bytes], ref: str, reason: str | None = None):
+    """A git report-status: how a push is accepted or rejected ON THE WIRE.
+
+    An HTTP 403 is the wrong shape once the pack is flowing: git wraps the
+    exchange in a side-band and the body never reaches the user, who sees only
+    `RPC failed; HTTP 403` with no reason at all (measured 2026-08-10). A `ng`
+    line lands in their terminal, next to the ref it refused.
+    """
+    if not caps & {b"report-status", b"report-status-v2"}:
+        return Response(b"", media_type="application/x-git-receive-pack-result")
+    status = f"ng {ref} {reason}" if reason else f"ok {ref}"
+    lines = _pkt(b"unpack ok\n") + _pkt(status.encode() + b"\n") + b"0000"
+    body = _pkt(b"\x01" + lines) + b"0000" if b"side-band-64k" in caps else lines
+    return Response(body, media_type="application/x-git-receive-pack-result")
 
 
 def _repo_of(request: Request) -> tuple[str, JSONResponse | None]:
@@ -259,6 +304,59 @@ async def _proxy_pack(slug: str, service: str, rest, prefix: bytes = b""):
     )
 
 
+async def _promote(slug: str, command, caps: set[bytes], rest_of_stream, buffered: bytes):
+    """Land the objects on a scratch ref, then let GitHub judge the ancestry.
+
+    This is the whole point of the detour. The wire carries no force flag, and
+    `/compare` cannot answer about a commit GitHub has not received yet — but
+    `PATCH /git/refs` with `force: false` refuses a non-fast-forward NATIVELY,
+    on the server that owns the branch. So: push the pack to a throwaway ref
+    (nothing can be overwritten there), promote through the API, drop the scratch.
+
+    The pack is still never buffered: only the command prefix is rewritten, the
+    rest of the body streams straight through.
+    """
+    old, new, ref = command
+    headers = await _github_headers()
+    if isinstance(headers, JSONResponse):
+        return headers
+    headers = {**headers,
+               "Content-Type": "application/x-git-receive-pack-request",
+               "Accept": "application/x-git-receive-pack-result"}
+
+    scratch = f"{_SCRATCH_PREFIX}{uuid.uuid4().hex}"
+    # `old` becomes zero: a ref that does not exist yet cannot be a force-push.
+    prefix = _pkt(f"{_ZERO} {new} {scratch}\x00report-status".encode()) + b"0000"
+    tail = buffered[_after_flush(buffered):]
+
+    async def body():
+        yield prefix
+        if tail:
+            yield tail
+        async for chunk in rest_of_stream:
+            yield chunk
+
+    async with _client(read=300.0) as http:
+        landed = await http.post(f"{GITHUB_GIT}/{slug}.git/git-receive-pack",
+                                 headers=headers, content=body())
+    if landed.status_code != 200 or b"unpack ok" not in landed.content:
+        return _report(caps, ref, f"GitHub a refusé le pack (HTTP {landed.status_code}).")
+
+    try:
+        promoted = await _api("PATCH", f"/repos/{slug}/git/refs/{ref[len('refs/'):]}",
+                              json={"sha": new, "force": False})
+        if "error" in promoted:
+            detail = promoted["error"]
+            if "fast forward" in detail.lower():
+                detail = ("mise à jour non fast-forward : ce proxy ne force jamais. "
+                          "Rebaser sur origin, puis repousser.")
+            return _report(caps, ref, detail)
+        return _report(caps, ref)
+    finally:
+        # Best effort: a leftover scratch ref is noise, never a hazard.
+        await _api("DELETE", f"/repos/{slug}/git/refs/{scratch[len('refs/'):]}")
+
+
 async def receive_pack(request: Request):
     """A push. The commands are inspected before a single byte reaches GitHub."""
     if request.headers.get("content-encoding"):
@@ -286,11 +384,24 @@ async def receive_pack(request: Request):
     if not complete:
         return _refuse("liste de commandes git-receive-pack tronquée ou trop longue.", status=400)
 
-    reason = await _check_commands(slug, commands)
-    if reason:
-        return _refuse(reason)
+    if not commands:
+        return _refuse("aucune mise à jour de ref dans ce push.")
 
-    return await _proxy_pack(slug, "git-receive-pack", stream, prefix=buffered)
+    caps = _client_capabilities(buffered)
+    reason = _check_commands(commands)
+    if reason:
+        return _report(caps, commands[0][2], reason)
+
+    updates = [c for c in commands if c[0] != _ZERO]
+    if not updates:
+        # Creations only (new branch, new tag): nothing existing can be
+        # overwritten, so there is no ancestry to judge — stream it through.
+        return await _proxy_pack(slug, "git-receive-pack", stream, prefix=buffered)
+    if len(commands) > 1:
+        return _report(caps, updates[0][2],
+                       "ce push met à jour plusieurs refs à la fois ; ce proxy en promeut "
+                       "une par requête. Pousser les refs séparément.")
+    return await _promote(slug, commands[0], caps, stream, buffered)
 
 
 async def upload_pack(request: Request):

@@ -55,6 +55,22 @@ def test_no_token_is_401_with_discovery_pointer(app):
     assert "oauth-protected-resource" in r.headers["WWW-Authenticate"]
 
 
+def test_git_paths_challenge_in_basic_or_no_helper_is_ever_called(app):
+    """Under /git the client is git, and git cannot read a Bearer challenge.
+
+    Faced with one it gives up on "Authentication failed" WITHOUT asking its
+    credential helper — so a valid token never gets a chance, and the helper
+    meant to carry the channel and the shield could never run (measured
+    2026-08-10). Everywhere else the RFC 9728 pointer stays untouched.
+    """
+    with TestClient(app) as client:
+        git = client.get("/git/AntorFr/x/info/refs?service=git-upload-pack")
+        mcp = client.post("/ok/")
+    assert git.status_code == 401
+    assert git.headers["WWW-Authenticate"].startswith("Basic ")
+    assert "oauth-protected-resource" in mcp.headers["WWW-Authenticate"]
+
+
 def test_health_and_wellknown_are_open(app):
     with TestClient(app) as client:
         assert client.get("/health").status_code == 200

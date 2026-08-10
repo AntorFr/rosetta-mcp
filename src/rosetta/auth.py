@@ -24,6 +24,15 @@ from starlette.responses import JSONResponse
 # Paths served without a token: health probes and OAuth discovery documents.
 _EXEMPT_PREFIXES = ("/health", "/.well-known/")
 
+# Paths whose 401 must challenge in **Basic**, because their client is git.
+#
+# Git does not understand a `Bearer` challenge: faced with one it gives up on
+# "Authentication failed" WITHOUT EVER ASKING ITS CREDENTIAL HELPER — so a pod
+# holding a perfectly valid token could not push, and no helper could ever be
+# written (measured 2026-08-10). This is the narrowest fix: the challenge changes
+# only under /git, where the caller is git and never a browser.
+_BASIC_CHALLENGE_PREFIXES = ("/git/",)
+
 _ALGORITHMS = ["RS256", "PS256", "ES256"]
 
 # Authelia issues client_credentials tokens with this subject prefix - the
@@ -161,8 +170,11 @@ class BearerJWTMiddleware:
                  "error_description": error},
                 status_code=status,
                 headers={
-                    # RFC 9728 §5.1: point OAuth-aware clients at our metadata.
+                    # RFC 9728 §5.1: point OAuth-aware clients at our metadata —
+                    # except where the client is git, which only speaks Basic.
                     "WWW-Authenticate": (
+                        'Basic realm="rosetta"'
+                        if path.startswith(_BASIC_CHALLENGE_PREFIXES) else
                         'Bearer resource_metadata='
                         f'"{self.config.external_url}/.well-known/oauth-protected-resource"'
                     )
