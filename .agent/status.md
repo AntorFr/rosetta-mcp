@@ -1,6 +1,30 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-08-10
+> MàJ : 2026-08-13
+
+**`mail` + `postier` — 0.16.0 : le courrier de la maison entre au hub (2026-08-13)**.
+Deux addons nés de la migration mailbox.org → OVH Zimbra de la veille.
+
+- **`mail`** (`identity = "user"`) : les boîtes familiales en IMAP pur — recherche,
+  lecture, **brouillons seulement** (le jumeau souverain de `google` : même garde par
+  la surface d'outils). La boîte est **dérivée de l'identité du token** :
+  `preferred_username` → pliage accents/casse (le même que creds-sync) → 
+  `<local>@MAIL_DOMAIN`, mot de passe dans `MAIL_PASSWORD_<LOCAL>` (external-secrets).
+  Un brouillon-réponse chaîne `In-Reply-To`/`References` et honore `Reply-To` avant
+  `From`. Plus les **alias jetables** via l'API OVH v2, bornés par construction à la
+  boîte de l'appelant (liste/création/suppression — jamais ceux d'autrui, testé).
+- **`postier`** (classe machine — construit pour Nestor, que `/mail` refuse par
+  identité) : l'UNIQUE capacité d'envoi. Expéditeur **gelé** à `POSTIER_FROM`,
+  destinataires filtrés par `POSTIER_ALLOWED` (défaut : le domaine familial), quota
+  horaire en fenêtre glissante, journal + copie Sent par IMAP (échec de copie =
+  information, jamais un mensonge sur l'envoi).
+- 17 tests neufs (identité accentuée, fil de réponse, alias d'autrui refusé,
+  liste blanche, quota glissant), suite complète à 247. Aucun réseau dans les tests
+  (IMAP/SMTP factices, OVH par MockTransport).
+- **Reste à faire (déploiement)** : bloc `externalSecrets` dans le HelmChart
+  (MAIL_PASSWORD_* ← `creds/*`, OVH_* ← `apps/ovh`, POSTIER_PASSWORD ←
+  `apps/nestor·zimbra_password`), MAIL_IMAP_HOST/MAIL_DOMAIN/POSTIER_FROM en env,
+  et vérifier `ROSETTA_ADDONS` si la liste est explicite en prod.
 
 **`git` — 0.15.0 : le proxy publie enfin pour de bon (2026-08-10)**. La 0.14.1 avait réparé
 l'enveloppe d'auth ; il restait **deux pannes**, toutes deux trouvées en poussant pour de vrai
