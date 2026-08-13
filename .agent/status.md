@@ -2,6 +2,17 @@
 
 > MàJ : 2026-08-13
 
+**`mail` — 0.17.0 : la capacité suit la session (2026-08-13)**. Plus AUCUN mot de
+passe de boîte dans le pod : l'addon échange le bearer de l'appelant contre un
+token coffre (OpenBao auth JWT fédérée Authelia, rôle `rosetta-mail`) dont la
+policy TEMPLÉE n'ouvre que `creds/<mail_local>` — le coffre arbitre, pas le code.
+`mail_local` = claim Authelia calculé (CEL `emails[0].split("@")[0]`, attribut +
+claims policies déployés le 13/08 ; ⚠️ la variable CEL est `emails` au PLURIEL et
+validate-config ne compile PAS le CEL — banc docker local obligatoire). auth.py
+expose désormais le token brut (`current_token`) à côté des claims. Cache mdp 10
+min en mémoire. Reste : gestes coffre admin (mount jwt-authelia + rôle + policy
+templée — script remis à l'utilisateur), puis E2E via Alfred.
+
 **`mail` + `postier` — 0.16.0 : le courrier de la maison entre au hub (2026-08-13)**.
 Deux addons nés de la migration mailbox.org → OVH Zimbra de la veille.
 

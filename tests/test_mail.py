@@ -1,15 +1,17 @@
-"""mail addon : l'identité accentuée, le fil de discussion, et l'alias d'autrui.
+"""mail addon : le token qui ouvre le coffre, le fil de discussion, l'alias d'autrui.
 
-Trois vérités structurent ces tests. « Sébastien » doit devenir
-`sebastien@berard.me` — le même pliage que creds-sync, sinon l'identité du
-token et la boîte provisionnée se ratent en silence (le bug latin-1 de
-`_common.remote_user` a déjà coûté une soirée : ici on teste le pliage, pas la
-chance). Un brouillon de réponse doit chaîner `In-Reply-To`/`References` et
-honorer `Reply-To` avant `From`, sinon le destinataire reçoit un fil orphelin.
-Et les alias ne se manipulent QUE vers sa propre boîte : la suppression de
-l'alias d'un autre membre doit échouer par construction, pas par politesse.
+Quatre vérités structurent ces tests. Le mot de passe ne vient PAS du pod :
+l'addon échange le bearer de l'appelant contre un token coffre (auth JWT) et
+ne lit que `creds/<mail_local>` — on vérifie que le login part avec le BON
+token et le bon rôle, que le refus du coffre rend une erreur explicite, et que
+le cache évite un login par appel. L'identité : le claim `mail_local` prime,
+le pliage de `preferred_username` (« Sébastien » → sebastien) reste le filet.
+Un brouillon de réponse chaîne `In-Reply-To`/`References` et honore `Reply-To`
+avant `From`. Et les alias ne se manipulent QUE vers sa propre boîte : la
+suppression de l'alias d'autrui échoue par construction, pas par politesse.
 
-Tout est simulé : IMAP par un faux enregistreur, OVH par httpx.MockTransport.
+Tout est simulé : IMAP par un faux enregistreur, coffre et OVH par
+httpx.MockTransport.
 """
 
 import json
@@ -18,7 +20,7 @@ import httpx
 import pytest
 
 from rosetta.addons import mail
-from rosetta.auth import current_claims
+from rosetta.auth import current_claims, current_token
 
 
 class FakeImap:
@@ -68,35 +70,74 @@ ORIGINAL = (b"From: Facteur <facteur@exemple.fr>\r\n"
 def boite(monkeypatch):
     monkeypatch.setenv("MAIL_IMAP_HOST", "imap.test")
     monkeypatch.setenv("MAIL_DOMAIN", "berard.me")
-    monkeypatch.setenv("MAIL_PASSWORD_SEBASTIEN", "secret")
     fake = FakeImap()
     logins = []
+    vault_logins = []
 
     def factory(email_addr, password):
         logins.append((email_addr, password))
         return fake
 
+    def vault_handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/login"):
+            vault_logins.append(json.loads(request.content))
+            return httpx.Response(200, json={"auth": {"client_token": "vtok"}})
+        if path.endswith("/creds/sebastien"):
+            return httpx.Response(200, json={"data": {"data": {"password": "secret"}}})
+        return httpx.Response(403, json={"errors": ["permission denied"]})
+
     mail._imap_factory = factory
+    mail._vault_transport = httpx.MockTransport(vault_handler)
     mail._ovh_cache.clear()
-    token = current_claims.set({"preferred_username": "Sébastien", "sub": "x"})
-    yield fake, logins
-    current_claims.reset(token)
+    mail._pw_cache.clear()
+    t_claims = current_claims.set({"preferred_username": "Sébastien", "sub": "uuid-x"})
+    t_token = current_token.set("jeton-signe-de-sebastien")
+    yield fake, logins, vault_logins
+    current_claims.reset(t_claims)
+    current_token.reset(t_token)
     mail._imap_factory = None
     mail._transport = None
+    mail._vault_transport = None
     mail._ovh_cache.clear()
+    mail._pw_cache.clear()
 
 
-def test_identite_accentuee_mappe_la_boite(boite):
-    fake, logins = boite
+def test_identite_accentuee_ouvre_le_coffre_puis_la_boite(boite):
+    fake, logins, vault_logins = boite
     assert mail.mail_dossiers() == ["INBOX", "Drafts"]
+    # le login coffre part avec LE token de l'appelant et le bon rôle
+    assert vault_logins == [{"role": "rosetta-mail", "jwt": "jeton-signe-de-sebastien"}]
     assert logins == [("sebastien@berard.me", "secret")]
     assert fake.logged_out
 
 
-def test_password_absent_nomme_la_variable(boite, monkeypatch):
-    monkeypatch.delenv("MAIL_PASSWORD_SEBASTIEN")
-    message = mail.mail_dossiers()
-    assert isinstance(message, str) and "MAIL_PASSWORD_SEBASTIEN" in message
+def test_claim_mail_local_prime_sur_le_pliage(boite):
+    _, logins, _ = boite
+    token = current_claims.set({"preferred_username": "N'Importe Qui",
+                                "mail_local": "sebastien", "sub": "uuid-x"})
+    try:
+        mail.mail_dossiers()
+    finally:
+        current_claims.reset(token)
+    assert logins[-1][0] == "sebastien@berard.me"
+
+
+def test_cache_evite_un_login_coffre_par_appel(boite):
+    _, _, vault_logins = boite
+    mail.mail_dossiers()
+    mail.mail_dossiers()
+    assert len(vault_logins) == 1  # le second appel vit sur le cache
+
+
+def test_coffre_refuse_l_identite(boite):
+    token = current_claims.set({"mail_local": "emilie", "sub": "uuid-e"})
+    try:
+        message = mail.mail_dossiers()
+    finally:
+        current_claims.reset(token)
+    # le faux coffre ne sert que creds/sebastien : emilie prend un 403 explicite
+    assert isinstance(message, str) and "creds/emilie" in message
 
 
 def test_hors_contexte_utilisateur(boite):
@@ -108,7 +149,7 @@ def test_hors_contexte_utilisateur(boite):
 
 
 def test_recherche_criteres_et_resume(boite):
-    fake, _ = boite
+    fake, _, _ = boite
     fake.search_result = b"3 7"
     fake.messages[b"7"] = (
         b"1 (UID 7 FLAGS (\\Flagged) BODY[HEADER.FIELDS (FROM SUBJECT DATE)]",
@@ -126,7 +167,7 @@ def test_recherche_criteres_et_resume(boite):
 
 
 def test_lire_rend_le_corps_sans_marquer(boite):
-    fake, _ = boite
+    fake, _, _ = boite
     fake.messages[b"7"] = (b"1 (UID 7 FLAGS ()", ORIGINAL)
     msg = mail.mail_lire("7")
     assert msg["corps"].startswith("Bonjour")
@@ -135,7 +176,7 @@ def test_lire_rend_le_corps_sans_marquer(boite):
 
 
 def test_brouillon_reponse_chaine_le_fil(boite):
-    fake, _ = boite
+    fake, _, _ = boite
     fake.messages[b"7"] = (b"1 (UID 7 FLAGS ()", ORIGINAL)
     out = mail.mail_brouillon(corps="On signe.", en_reponse_a="7")
     assert out["dossier"] == "Drafts" and out["de"] == "sebastien@berard.me"

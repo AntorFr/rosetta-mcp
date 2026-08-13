@@ -7,13 +7,16 @@ platform, plus the one thing Gmail never had - **disposable aliases** through
 the OVH v2 API (create one per merchant, burn it at the first spam).
 
 Identity: `identity = "user"` - the hub refuses machine tokens on /mail, so
-every call carries a human subject. The mailbox is DERIVED from that identity:
-`preferred_username` -> accents stripped, casefolded -> `<local>@MAIL_DOMAIN`,
-password read from `MAIL_PASSWORD_<LOCAL>` (provisioned server-side by
-external-secrets from the vault; agents never see it). Alias tools are
-self-service *bounded by construction*: they only ever list, create or delete
-aliases pointing at the CALLER's own account - no group gate needed, the blast
-radius is the caller's own mailbox.
+every call carries a human subject. The mailbox is DERIVED from that identity
+(`mail_local` claim, an Authelia CEL attribute = the email local part; the
+accent-folded `preferred_username` is the transition fallback), and the
+password is NOT provisioned to this pod at all: the addon EXCHANGES the
+caller's own bearer against a vault token (OpenBao JWT auth federated on
+Authelia) whose templated policy only opens `creds/<mail_local>`. The
+capability follows the SSO session and the VAULT arbitrates - a bug here
+cannot read another member's mailbox, because this process never could.
+Alias tools are self-service *bounded by construction*: they only ever list,
+create or delete aliases pointing at the CALLER's own account.
 
 Two IMAP details shape the module:
 
@@ -43,7 +46,7 @@ from email.utils import formatdate, make_msgid, parsedate_to_datetime
 
 import httpx
 
-from ..auth import current_claims
+from ..auth import current_claims, current_token
 from ._common import TIMEOUT, new_server
 
 identity = "user"
@@ -54,12 +57,15 @@ mcp = new_server("mail")
 
 OVH_API = "https://eu.api.ovh.com"
 BODY_MAX = 20_000  # characters of body text returned by mail_lire
+PW_CACHE_TTL = 600  # seconds a fetched mailbox password stays in memory
 
-# Test seams: tests swap the IMAP factory and the httpx transport, no network.
+# Test seams: tests swap the IMAP factory and the httpx transports, no network.
 _imap_factory = None
 _transport = None
+_vault_transport = None
 
 _ovh_cache: dict = {}  # platform/account ids: stable for the platform's lifetime
+_pw_cache: dict = {}   # local -> (password, expiry): spares the vault a login per call
 
 
 # ---- identity -> mailbox ----------------------------------------------------
@@ -73,17 +79,46 @@ def _norm(name: str) -> str:
 
 
 def _caller() -> tuple[str, str] | str:
-    """(email, password) of the caller's mailbox, or a French error string."""
+    """(email, password) of the caller's mailbox, or a French error string.
+
+    The password comes from the vault, unlocked BY THE CALLER'S OWN TOKEN:
+    OpenBao's JWT auth validates it against Authelia and issues a token whose
+    templated policy only reads `creds/<mail_local>`. This process holds no
+    mailbox password of its own - it can only open what the caller could."""
     claims = current_claims.get() or {}
-    name = str(claims.get("preferred_username") or claims.get("sub") or "")
-    local = _norm(unicodedata.normalize("NFC", name))
+    local = str(claims.get("mail_local") or "").strip() or _norm(
+        unicodedata.normalize("NFC", str(claims.get("preferred_username") or "")))
     if not local:
         return "identité introuvable dans le token — appel hors contexte utilisateur ?"
-    password = os.environ.get(f"MAIL_PASSWORD_{re.sub(r'[^A-Z0-9]', '_', local.upper())}")
+    email_addr = f"{local}@{os.environ['MAIL_DOMAIN']}"
+
+    hit = _pw_cache.get(local)
+    if hit and hit[1] > time.time():
+        return email_addr, hit[0]
+
+    token = current_token.get()
+    if not token:
+        return "token brut indisponible — hub démarré sans middleware d'auth ?"
+    vault = os.environ.get("MAIL_VAULT_ADDR", "https://vault.berard.me").rstrip("/")
+    mount = os.environ.get("MAIL_VAULT_MOUNT", "jwt-authelia")
+    role = os.environ.get("MAIL_VAULT_ROLE", "rosetta-mail")
+    with httpx.Client(transport=_vault_transport, timeout=TIMEOUT) as client:
+        r = client.post(f"{vault}/v1/auth/{mount}/login",
+                        json={"role": role, "jwt": token})
+        if r.status_code != 200:
+            return (f"le coffre a refusé ton identité (HTTP {r.status_code}) — "
+                    f"mount {mount}/rôle {role} en place et token encore valide ?")
+        vtok = r.json()["auth"]["client_token"]
+        r = client.get(f"{vault}/v1/secret/data/creds/{local}",
+                       headers={"X-Vault-Token": vtok})
+        if r.status_code != 200:
+            return (f"le coffre n'ouvre pas creds/{local} pour cette identité "
+                    f"(HTTP {r.status_code}).")
+        password = (r.json().get("data", {}).get("data", {}) or {}).get("password", "")
     if not password:
-        return (f"pas de mot de passe provisionné pour « {local} » "
-                f"(env MAIL_PASSWORD_{local.upper()} absente) — boîte non desservie.")
-    return f"{local}@{os.environ['MAIL_DOMAIN']}", password
+        return f"creds/{local} existe mais n'a pas de champ password."
+    _pw_cache[local] = (password, time.time() + PW_CACHE_TTL)
+    return email_addr, password
 
 
 def _imap(email_addr: str, password: str):

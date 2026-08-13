@@ -45,6 +45,13 @@ MACHINE_SUB_PREFIX = "oauth2:client:"
 # dedicated test asserts.
 current_claims: ContextVar[dict | None] = ContextVar("rosetta_claims", default=None)
 
+# The RAW bearer of the current request, for addons that EXCHANGE the caller's
+# token against a downstream credential (mail: OpenBao JWT login, where the
+# vault's templated policy — not addon code — decides what this identity may
+# read). Decoded claims cannot be replayed; the exchange needs the signed
+# token itself. Same lifecycle as `current_claims`.
+current_token: ContextVar[str | None] = ContextVar("rosetta_token", default=None)
+
 
 def token_from_header(value: str) -> str:
     """The access token carried by an `Authorization` header, or "".
@@ -163,9 +170,10 @@ class BearerJWTMiddleware:
                     # User-data addon: a machine identity is not enough.
                     error, status = "this resource requires a user identity token", 403
                 else:
-                    # Expose claims to downstream apps and addon tools.
+                    # Expose claims and the raw token to downstream addon tools.
                     scope.setdefault("state", {})["token_claims"] = claims
                     current_claims.set(claims)
+                    current_token.set(token)
 
         if error is not None:
             response = JSONResponse(
