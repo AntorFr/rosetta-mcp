@@ -76,12 +76,16 @@ measures, daily activity, sleep summaries, workouts and the devices themselves,
 enrolled once at `/withings/enroll`), and `github` (user-data class, for the
 coding agent: nine read tools — repo listing, file, tree, commits, code search,
 tags, Actions runs, plus pull requests (list, and one in detail with its merge
-state, changed files and, on request, the patch) — and exactly **three** write
-tools, `repo_commit` (create / modify / **delete** in one atomic commit through
-the Git Data API; a `null` content deletes, so deletion is never a separate
-capability to unlock), `repo_tag`, and `pull_request_merge`. Deliberately
-**absent**, and that absence *is* the guarantee rather than a hook: repository
-creation or deletion, forks, branch deletion, force-push, issues, opening /
+state, changed files and, on request, the patch) — and exactly **four** write
+tools, `repo_create` (a **new** repository: always private, always empty — an
+auto-generated README would make the first push of an existing clone
+non-fast-forward, which the `/git/` proxy refuses — and always under the
+caller's own account; pure creation, an existing name is refused), `repo_commit`
+(create / modify / **delete** in one atomic commit through the Git Data API; a
+`null` content deletes, so deletion is never a separate capability to unlock),
+`repo_tag`, and `pull_request_merge`. Deliberately **absent**, and that absence
+*is* the guarantee rather than a hook: repository deletion, flipping a
+repository public, forks, branch deletion, force-push, issues, opening /
 closing / commenting / reviewing a pull request, Actions secrets, settings,
 collaborators.
 
@@ -96,7 +100,9 @@ The branch is never deleted afterwards: that tool does not exist here.
 Needs a **GitHub App** with *Expire user authorization tokens* enabled — without
 it GitHub issues no refresh token — declaring `contents: write`,
 `metadata: read`, `actions: read`, **`pull requests: read`** (merging itself
-goes through `contents: write`) and, easily forgotten, **`workflows: write`**
+goes through `contents: write`), **`administration: write`** (repository
+creation — and remember a permission change only takes effect once **approved
+on the installation**) and, easily forgotten, **`workflows: write`**
 for any commit touching `.github/workflows/`. Credentials via
 `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`, per-user tokens under
 `ROSETTA_GITHUB_DATA`, enrolled once at `/github/enroll`), and `food`

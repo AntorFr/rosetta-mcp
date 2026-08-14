@@ -133,6 +133,66 @@ def test_403_names_the_workflows_permission(enrolled):
 
 # ---------------------------------------------------------------- écritures
 
+def test_repo_create_is_private_empty_and_under_the_caller(enrolled):
+    """Toujours privé (le passage en public est un geste humain) et toujours
+    VIDE : un README auto-généré rendrait le premier push d'un clone existant
+    non fast-forward — que le proxy /git/ refuse. Le retour donne le remote
+    rosetta prêt à câbler."""
+    vu = {}
+
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        assert request.method == "POST" and request.url.path == "/user/repos"
+        vu["body"] = json.loads(request.content)
+        return httpx.Response(201, json={
+            "full_name": "AntorFr/atelier", "name": "atelier", "private": True,
+            "html_url": "https://github.com/AntorFr/atelier",
+        })
+
+    transport(handler)
+    out = run(github.repo_create("atelier", description="essai"))
+    assert vu["body"]["private"] is True, "toujours privé"
+    assert vu["body"]["auto_init"] is False, "toujours vide — le proxy interdit le force-push"
+    assert out["depot"] == "AntorFr/atelier"
+    assert out["remote_git"].endswith("/git/AntorFr/atelier")
+
+
+def test_repo_create_refuses_an_owner_and_a_name_github_would_rewrite(enrolled):
+    """Le dépôt naît sous le compte enrôlé — pas d'organisation, pas d'autre
+    compte. Et un nom que GitHub normaliserait en silence (« mon repo » devient
+    « mon-repo ») est refusé plutôt que créé au nom surprise."""
+    assert "sans propriétaire" in run(github.repo_create("Org/naval"))["error"]
+    assert "invalide" in run(github.repo_create("mon repo"))["error"]
+    assert "invalide" in run(github.repo_create(".."))["error"]
+
+
+def test_repo_create_is_pure_creation(enrolled):
+    """Un nom déjà pris est un refus : rien n'est réutilisé, rien n'est écrasé."""
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        return httpx.Response(422, json={"message": "name already exists on this account"})
+
+    transport(handler)
+    out = run(github.repo_create("agent-pods"))
+    assert "existe déjà" in out["error"]
+
+
+def test_repo_create_403_names_the_administration_permission(enrolled):
+    """Le 403 de /user/repos ne vient ni de `workflows` ni de « Pull requests » :
+    le message doit nommer « Administration » ET rappeler que le changement
+    n'agit qu'approuvé côté installation — le piège du jour de la mise en place."""
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        return httpx.Response(403, json={"message": "Resource not accessible by integration"})
+
+    transport(handler)
+    out = run(github.repo_create("atelier"))
+    assert "Administration" in out["error"] and "installation" in out["error"]
+
+
 def test_repo_commit_is_atomic_and_deletes_with_a_null(enrolled):
     """Un seul commit : blob -> arbre -> commit -> ref. `contenu: None` supprime."""
     calls = []
@@ -379,9 +439,9 @@ def test_the_surface_is_the_guard():
     outils = exposed & {
         "repo_list", "repo_file", "repo_tree", "repo_commits", "repo_search_code",
         "repo_tags", "actions_runs", "pull_requests", "pull_request",
-        "repo_commit", "repo_tag", "pull_request_merge",
+        "repo_create", "repo_commit", "repo_tag", "pull_request_merge",
     }
-    assert len(outils) == 12, "la surface attendue est de 12 outils"
+    assert len(outils) == 13, "la surface attendue est de 13 outils"
     interdits = [n for n in exposed if any(
         mot in n for mot in ("delete", "fork", "force", "secret", "collaborator",
                              "issue", "admin", "webhook", "review", "approve",

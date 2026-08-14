@@ -1,6 +1,15 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-08-13
+> MàJ : 2026-08-14
+
+**`github` — 0.18.0 : `repo_create`, le pod crée ses dépôts (2026-08-14)**. 4e outil
+d'écriture : dépôt NEUF toujours privé, toujours VIDE (un README auto rendrait le
+premier push d'un clone existant non fast-forward — que le proxy /git/ refuse),
+toujours sous le compte de l'appelant ; création pure (nom pris = refus), nom validé
+strictement (GitHub normalise en silence). Le 403 nomme « Administration » (écriture)
+ET rappelle l'approbation côté installation — permission ajoutée à l'App par
+l'utilisateur le 14/08. Garde relue dans la même passe : `github_guard.py` (cockpit)
+et `SKIPPY-POD.md` (agent-pods). Reste : e2e réel depuis le pod, bouclier armé.
 
 **`mail` — 0.17.0 : la capacité suit la session (2026-08-13)**. Plus AUCUN mot de
 passe de boîte dans le pod : l'addon échange le bearer de l'appelant contre un
