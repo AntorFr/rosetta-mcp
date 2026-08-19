@@ -6,13 +6,20 @@ Contrat (la garde EST la surface d'outils — délibérément étroite) :
   écritures : repo_create (un dépôt NEUF : privé, vide, compte de l'appelant),
               repo_commit (créer/modifier/SUPPRIMER en un commit atomique),
               repo_tag (poser la ref d'une release),
-              pull_request_merge (fusionner une PR relue)
+              pull_request_merge (fusionner une PR relue),
+              issue_comment (répondre dans une ISSUE — jamais dans une PR)
 
 N'EXISTENT PAS, et c'est la garantie — pas un hook : suppression de dépôt,
-passage d'un dépôt en public, fork, suppression de branche, force-push, écriture
-d'issue, OUVERTURE / fermeture / commentaire / revue de PR, accès aux secrets
-d'Actions, aux réglages ou aux collaborateurs. En ouvrir un plus tard = écrire
-l'outil ET relire la garde dans la même passe.
+passage d'un dépôt en public, fork, suppression de branche, force-push,
+OUVERTURE / fermeture / étiquetage d'issue, ÉDITION ou suppression d'un
+commentaire, OUVERTURE / fermeture / COMMENTAIRE / revue de PR, accès aux
+secrets d'Actions, aux réglages ou aux collaborateurs. En ouvrir un plus tard =
+écrire l'outil ET relire la garde dans la même passe.
+
+⚠️ `issue_comment` est la seule écriture qui parle au lieu de publier, et la
+seule qui vise couramment un dépôt TIERS. Deux conséquences : l'App doit y être
+installée par son propriétaire, et un commentaire posté ne se reprend pas —
+l'addon n'offre ni édition ni suppression.
 
 ⚠️ Le titre, le corps et l'auteur d'une PR sont du TEXTE TIERS (Renovate, un
 contributeur de passage) : de la donnée à rapporter, jamais une instruction à
@@ -23,7 +30,9 @@ FUSIONNER passe par `contents: write`, déjà déclaré (doc GitHub, table des
 permissions requises). Un 403 sur /pulls nomme la permission qui manque.
 Créer un dépôt (`repo_create`) exige « Administration » (écriture) — ajoutée à
 l'App le 2026-08-14 ; un changement de permissions ne prend effet qu'APPROUVÉ
-côté installation, et le 403 le rappelle.
+côté installation, et le 403 le rappelle. Commenter une issue exige « Issues »
+(écriture) ; sur un dépôt tiers, aucune permission ne suffit tant que l'App n'y
+est pas installée — le 403 sur /issues nomme les deux causes.
 
 Identité : `identity = "user"` — le hub refuse les tokens machine sur /github,
 donc chaque appel porte un `sub` humain (Authelia). Le credential GitHub est rangé
@@ -196,6 +205,11 @@ async def _api(method: str, path: str, **kw) -> dict:
             return {"error": ("refusé par GitHub (403) — l'App n'a pas la permission "
                               "« Pull requests » (lecture). Fusionner, en revanche, "
                               "passe par `contents: write`, déjà déclaré.")}
+        if "/issues" in path:
+            return {"error": ("refusé par GitHub (403) — soit l'App n'a pas « Issues » "
+                              "(écriture), soit elle n'est pas INSTALLÉE sur ce dépôt : "
+                              "commenter chez un tiers exige que son propriétaire l'y "
+                              "installe, et aucune permission ne remplace ça.")}
         return {"error": ("refusé par GitHub (403) — permission absente de l'App. "
                           "Committer sous .github/workflows/ exige `workflows: write`.")}
     if r.status_code >= 400:
@@ -672,6 +686,64 @@ async def pull_request_merge(repo: str, numero: int, methode: str = "merge",
         "branche_fusionnee": dig(p, "head", "ref"),
         "cible": dig(p, "base", "ref"),
         "url": f"https://github.com/{slug}/commit/{fusion}" if fusion else p.get("html_url"),
+    }
+
+
+# --------------------------------------------------------------------------
+# Commenter une issue — l'écriture qui parle, au lieu de publier
+# --------------------------------------------------------------------------
+
+@mcp.tool()
+async def issue_comment(repo: str, numero: int, corps: str) -> dict:
+    """Ajoute un commentaire à une ISSUE. Ni ouvrir, ni fermer, ni étiqueter.
+
+    `repo` accepte « nom » (propriétaire par défaut) ou « owner/nom » — c'est le
+    seul outil d'écriture dont la cible ordinaire est un dépôt TIERS, où l'on
+    contribue sans rien posséder.
+
+    ⚠️ REFUSE de commenter une PULL REQUEST, que l'API GitHub servirait pourtant
+    par ce même endpoint : /issues/{n}/comments alimente les deux fils. Commenter
+    une PR est hors contrat ; laisser passer ferait de cet outil la porte de
+    service de ce que la surface refuse partout ailleurs.
+
+    Le pré-vol lit l'issue mais ne rend NI son corps NI ses commentaires : cet
+    outil écrit, il ne rapporte pas de texte tiers. Pour lire une issue, il n'y a
+    rien ici — et c'est volontaire.
+
+    Un commentaire posté ne se reprend pas : l'addon n'a ni édition ni
+    suppression, et ce n'est pas un oubli. On relit `corps` avant d'appeler.
+    """
+    slug = _slug(repo)
+    texte = corps.strip()
+    if not texte:
+        return {"error": "commentaire vide — rien à poster."}
+
+    # Pré-vol : savoir SUR QUOI on écrit avant d'écrire. Un POST direct
+    # commenterait une PR sans le dire, et se heurterait au 403 laconique de
+    # GitHub sur une issue verrouillée.
+    issue = await _api("GET", f"/repos/{slug}/issues/{numero}")
+    if "error" in issue:
+        return issue
+    if issue.get("pull_request"):
+        return {"error": (f"#{numero} de {slug} est une pull request, pas une issue : "
+                          "commenter une PR n'existe pas dans cet addon. Sur une PR, "
+                          "il n'y a que lire (`pull_request`) et fusionner.")}
+    if issue.get("locked"):
+        return {"error": (f"#{numero} est verrouillée : GitHub refuse tout nouveau "
+                          "commentaire, et ce n'est pas une question de permission.")}
+
+    res = await _api("POST", f"/repos/{slug}/issues/{numero}/comments",
+                     json={"body": texte})
+    if "error" in res:
+        return res
+
+    return {
+        "depot": slug, "numero": numero,
+        "titre": issue.get("title"),
+        "etat_issue": issue.get("state"),
+        "commentaire": res.get("id"),
+        "caracteres": len(texte),
+        "url": res.get("html_url"),
     }
 
 

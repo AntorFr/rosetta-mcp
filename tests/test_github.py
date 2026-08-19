@@ -428,21 +428,118 @@ def test_unknown_merge_method_is_refused(enrolled):
     assert "error" in out and "merge, squash ou rebase" in out["error"]
 
 
+# ---------------------------------------------------------------- issues
+
+ISSUE = {
+    "number": 556, "title": "Developer blog for kurrier", "state": "open",
+    "locked": False, "user": {"login": "krokhale"},
+    "html_url": "https://github.com/kurrier-org/kurrier/issues/556",
+}
+
+
+def test_issue_comment_posts_the_body_and_returns_the_permalink(enrolled):
+    vu = {}
+
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        if request.method == "POST":
+            vu["path"] = request.url.path
+            vu["body"] = json.loads(request.content)
+            return httpx.Response(201, json={
+                "id": 99, "html_url": ISSUE["html_url"] + "#issuecomment-99"})
+        return httpx.Response(200, json=ISSUE)
+
+    transport(handler)
+    out = run(github.issue_comment("kurrier-org/kurrier", 556, "  Sounds good.  "))
+    assert vu["path"] == "/repos/kurrier-org/kurrier/issues/556/comments"
+    assert vu["body"] == {"body": "Sounds good."}, "le corps est nettoyé, pas reformaté"
+    assert out["titre"] == "Developer blog for kurrier" and out["commentaire"] == 99
+    assert out["url"].endswith("#issuecomment-99")
+
+
+def test_issue_comment_refuses_a_pull_request_without_writing(enrolled):
+    """/issues/{n}/comments sert AUSSI les PR : sans ce refus, l'outil serait la
+    porte de service du commentaire de PR, que la surface exclut partout."""
+    ecritures = []
+
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        if request.method == "POST":
+            ecritures.append(1)
+            return httpx.Response(201, json={"id": 1})
+        return httpx.Response(200, json=ISSUE | {
+            "pull_request": {"url": "https://api.github.com/repos/x/y/pulls/556"}})
+
+    transport(handler)
+    out = run(github.issue_comment("kurrier-org/kurrier", 556, "bonjour"))
+    assert "pull request" in out["error"] and not ecritures, "aucun POST ne doit partir"
+
+
+def test_issue_comment_refuses_a_locked_issue_without_writing(enrolled):
+    ecritures = []
+
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        if request.method == "POST":
+            ecritures.append(1)
+            return httpx.Response(201, json={"id": 1})
+        return httpx.Response(200, json=ISSUE | {"locked": True})
+
+    transport(handler)
+    out = run(github.issue_comment("demo", 4, "bonjour"))
+    assert "verrouillée" in out["error"] and not ecritures
+
+
+def test_issue_comment_refuses_an_empty_body_before_any_call(enrolled):
+    appels = []
+
+    def handler(request):
+        appels.append(request.url.path)
+        return httpx.Response(200, json=ISSUE)
+
+    transport(handler)
+    out = run(github.issue_comment("demo", 4, "   \n  "))
+    assert "vide" in out["error"] and not appels, "pas même une lecture"
+
+
+def test_403_on_issues_names_the_installation_not_the_workflows(enrolled):
+    """Sur un dépôt tiers, la cause probable n'est pas une permission manquante
+    mais une App non installée — le message doit dire les deux."""
+    def handler(request):
+        if request.url.host == "github.com":
+            return token_ok(request)
+        if request.method == "POST":
+            return httpx.Response(403, json={"message": "Resource not accessible"})
+        return httpx.Response(200, json=ISSUE)
+
+    transport(handler)
+    out = run(github.issue_comment("kurrier-org/kurrier", 556, "bonjour"))
+    assert "INSTALL" in out["error"] and "workflows" not in out["error"]
+
+
 # ---------------------------------------------------------------- la surface
 
 def test_the_surface_is_the_guard():
     """Ce qui n'est pas là est la GARANTIE, pas un oubli : aucun outil ne peut
     supprimer un dépôt, forker, écraser une branche, ouvrir/commenter/approuver
     une PR, ni toucher aux secrets. Ce test échoue le jour où quelqu'un en ajoute
-    un sans relire la garde — hook `github_guard.py` du cockpit compris."""
+    un sans relire la garde — hook `github_guard.py` du cockpit compris.
+
+    `issue_comment` porte deux des mots interdits (« issue », « comment ») : il
+    est nommé dans l'allowlist, et les mots restent bannis PARTOUT AILLEURS. Un
+    `issue_close` ou un `pull_request_comment` ajouté demain tombe toujours."""
     exposed = {t for t in dir(github) if not t.startswith("_") and callable(getattr(github, t))}
     outils = exposed & {
         "repo_list", "repo_file", "repo_tree", "repo_commits", "repo_search_code",
         "repo_tags", "actions_runs", "pull_requests", "pull_request",
         "repo_create", "repo_commit", "repo_tag", "pull_request_merge",
+        "issue_comment",
     }
-    assert len(outils) == 13, "la surface attendue est de 13 outils"
-    interdits = [n for n in exposed if any(
+    assert len(outils) == 14, "la surface attendue est de 14 outils"
+    interdits = [n for n in exposed - outils if any(
         mot in n for mot in ("delete", "fork", "force", "secret", "collaborator",
                              "issue", "admin", "webhook", "review", "approve",
                              "comment", "close")

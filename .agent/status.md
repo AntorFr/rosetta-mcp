@@ -1,6 +1,27 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-08-14
+> MàJ : 2026-08-19
+
+**`github` — 0.19.0 : `issue_comment`, répondre sans publier (2026-08-19)**. 5e outil
+d'écriture, et le premier dont la cible ordinaire est un dépôt TIERS (né du besoin de
+répondre à `kurrier-org/kurrier#556`). Pré-vol systématique avant le POST : il **refuse
+de commenter une pull request**, alors que `/issues/{n}/comments` sert les deux fils —
+sans ce refus l'outil serait la porte de service du commentaire de PR, que la surface
+exclut partout ailleurs ; refuse aussi une issue verrouillée et un corps vide, sans
+qu'aucun appel ne parte. Ne rend NI le corps NI les commentaires de l'issue : il écrit,
+il ne rapporte pas de texte tiers — lire une issue n'existe toujours pas ici. Ni
+édition ni suppression d'un commentaire : posté, c'est posté. Le 403 sur /issues nomme
+les DEUX causes (permission « Issues » en écriture, ou App non installée chez le tiers) ;
+sur un dépôt qu'on ne possède pas, c'est la seconde qui tombe en premier.
+
+⚠️ **La garde du cockpit n'est PAS encore relue** — contrairement à la règle « l'outil ET
+la garde dans la même passe ». `issue_comment` est absent de `WRITES` dans
+`github_guard.py`, donc l'allowlist stricte le **refuse** : fail-closed, l'outil existe
+côté hub et reste inutilisable côté pod. C'est le comportement voulu, pas une panne.
+Reste, dans l'ordre : garde + `bin/test-garde` (cockpit), déploiement (k8s-home-lab,
+dépôt sensible), session fraîche, puis e2e réel — et vérifier alors que l'OAuth de
+l'appelant porte bien l'écriture sur un dépôt tiers, ce que rien ne garantit avant
+l'essai.
 
 **`github` — 0.18.0 : `repo_create`, le pod crée ses dépôts (2026-08-14)**. 4e outil
 d'écriture : dépôt NEUF toujours privé, toujours VIDE (un README auto rendrait le
