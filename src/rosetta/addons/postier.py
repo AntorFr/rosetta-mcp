@@ -7,9 +7,9 @@ bounded by construction, not by trust:
 
   - the sender is FROZEN to `POSTIER_FROM` (the assistant's own mailbox) -
     no tool argument can impersonate a human;
-  - every recipient must match `POSTIER_ALLOWED` (default: the family domain) -
-    a hijacked agent writes an awkward email to the family, not spam to the
-    world;
+  - every recipient must match `POSTIER_ALLOWED`, which has NO default since
+    0.20.0 - unset means nobody is reachable at all. A hijacked agent writes an
+    awkward email to whoever the deployment named, not spam to the world;
   - a sliding-window rate limit (`POSTIER_MAX_PER_HOUR`) keeps even a looping
     agent polite;
   - every send is logged and copied to the Sent folder - auditable after the
