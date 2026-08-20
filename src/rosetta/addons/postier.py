@@ -48,7 +48,18 @@ _sent_at: list[float] = []  # sliding window; one replica by design (like within
 
 
 def _allowed_patterns() -> list[str]:
-    raw = os.environ.get("POSTIER_ALLOWED", "*@berard.me")
+    """Les destinataires permis, motifs fnmatch séparés par des virgules.
+
+    AUCUN DÉFAUT, et c'est une décision de sécurité autant que de propreté. Le défaut
+    valait `*@<mon domaine>` : dans un dépôt PUBLIC il publiait ce domaine, et surtout
+    il OUVRAIT tout un domaine aux envois sans que le déploiement l'ait demandé. Une
+    allowlist qui s'auto-remplit n'est pas une allowlist.
+
+    Variable absente ⇒ liste vide ⇒ `_refused` rejette TOUS les destinataires. Le
+    déploiement doit donc déclarer qui il autorise, ce qui est exactement le contrat
+    qu'on attend d'une garde.
+    """
+    raw = os.environ.get("POSTIER_ALLOWED", "")
     return [p.strip().casefold() for p in raw.split(",") if p.strip()]
 
 

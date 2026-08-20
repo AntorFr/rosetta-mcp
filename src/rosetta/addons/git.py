@@ -428,7 +428,7 @@ async def git_remote(repo: str) -> dict:
     Le pod ne détient aucun credential GitHub : c'est le hub qui authentifie, et le
     helper `git-credential-rosetta` (côté pod) qui décide si la demande part.
     """
-    base = os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me").rstrip("/")
+    base = os.environ.get("ROSETTA_EXTERNAL_URL", "").rstrip("/")
     slug = _slug(repo)
     allowed = _allowed_repos()
     if allowed is not None and slug not in allowed:

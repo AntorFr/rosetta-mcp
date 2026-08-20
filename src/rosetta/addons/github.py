@@ -133,7 +133,7 @@ async def _access_token(sub: str) -> str | dict:
         with open(_user_file(sub)) as f:
             user = json.load(f)
     except FileNotFoundError:
-        base = os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me")
+        base = os.environ.get("ROSETTA_EXTERNAL_URL", "")
         return {"error": (
             f"aucun compte GitHub enrôlé pour « {sub} ». Ouvrir {base}/github/enroll "
             "dans un navigateur pour autoriser l'accès (une seule fois)."
@@ -510,7 +510,7 @@ async def repo_create(nom: str, description: str = "") -> dict:
                               "attend encore l'approbation côté installation.")}
         return res
 
-    base = os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me").rstrip("/")
+    base = os.environ.get("ROSETTA_EXTERNAL_URL", "").rstrip("/")
     slug = res.get("full_name") or f"{_owner()}/{nom}"
     return {
         "depot": slug,
@@ -788,7 +788,7 @@ async def enroll(request):
     client = _oauth_client()
     if isinstance(client, str):
         return _page("🧩", "Configuration absente", client, 500)
-    external = os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me").rstrip("/")
+    external = os.environ.get("ROSETTA_EXTERNAL_URL", "").rstrip("/")
     params = {
         "client_id": client["client_id"],
         "redirect_uri": f"{external}/github/callback",
@@ -807,7 +807,7 @@ async def callback(request):
     client = _oauth_client()
     if isinstance(client, str):
         return _page("🧩", "Configuration absente", client, 500)
-    external = os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me").rstrip("/")
+    external = os.environ.get("ROSETTA_EXTERNAL_URL", "").rstrip("/")
     async with _client() as http:
         r = await http.post(TOKEN_URL, headers={"Accept": "application/json"}, data={
             "client_id": client["client_id"],

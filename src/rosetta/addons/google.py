@@ -128,7 +128,7 @@ async def _access_token(sub: str) -> str | dict:
     except FileNotFoundError:
         return {"error": (
             f"aucun compte Google enrôlé pour « {sub} ». Ouvrir "
-            f"{os.environ.get('ROSETTA_EXTERNAL_URL', 'https://rosetta.mcp.berard.me')}/google/enroll "
+            f"{os.environ.get('ROSETTA_EXTERNAL_URL', '')}/google/enroll "
             "dans un navigateur pour autoriser l'accès (une seule fois)."
         )}
     client = _oauth_client()
@@ -794,7 +794,7 @@ async def enroll(request):
     client = _oauth_client()
     if isinstance(client, str):
         return _page("🧩", "Configuration absente", client, 500)
-    external = os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me").rstrip("/")
+    external = os.environ.get("ROSETTA_EXTERNAL_URL", "").rstrip("/")
     params = {
         "client_id": client["client_id"],
         "redirect_uri": f"{external}/google/callback",
@@ -816,7 +816,7 @@ async def callback(request):
     client = _oauth_client()
     if isinstance(client, str):
         return _page("🧩", "Configuration absente", client, 500)
-    external = os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me").rstrip("/")
+    external = os.environ.get("ROSETTA_EXTERNAL_URL", "").rstrip("/")
     async with _client() as http:
         r = await http.post(GOOGLE_TOKEN_URL, data={
             "grant_type": "authorization_code",

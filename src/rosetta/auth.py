@@ -97,10 +97,12 @@ class AuthConfig:
 
     @classmethod
     def from_env(cls) -> "AuthConfig":
-        issuer = os.environ.get("ROSETTA_ISSUER", "https://auth.berard.me").rstrip("/")
-        external = os.environ.get(
-            "ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me"
-        ).rstrip("/")
+        # AUCUN DÉFAUT sur ces deux-là, et c'est délibéré : ce dépôt est PUBLIC.
+        # Ils valaient l'émetteur et l'URL de MON déploiement — donc mon DNS livré
+        # dans une image que d'autres peuvent tirer, et inutilisable par eux. Ces
+        # valeurs se déclarent dans le manifeste du hub, où elles ont leur place.
+        issuer = os.environ.get("ROSETTA_ISSUER", "").rstrip("/")
+        external = os.environ.get("ROSETTA_EXTERNAL_URL", "").rstrip("/")
         return cls(
             # "off" is meant for local development only.
             enabled=os.environ.get("ROSETTA_AUTH", "oidc").lower() != "off",

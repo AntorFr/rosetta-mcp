@@ -69,7 +69,8 @@ ORIGINAL = (b"From: Facteur <facteur@exemple.fr>\r\n"
 @pytest.fixture()
 def boite(monkeypatch):
     monkeypatch.setenv("MAIL_IMAP_HOST", "imap.test")
-    monkeypatch.setenv("MAIL_DOMAIN", "berard.me")
+    monkeypatch.setenv("MAIL_DOMAIN", "example.test")
+    monkeypatch.setenv("MAIL_VAULT_ADDR", "https://vault.example.test")
     fake = FakeImap()
     logins = []
     vault_logins = []
@@ -108,7 +109,7 @@ def test_identite_accentuee_ouvre_le_coffre_puis_la_boite(boite):
     assert mail.mail_dossiers() == ["INBOX", "Drafts"]
     # le login coffre part avec LE token de l'appelant et le bon rôle
     assert vault_logins == [{"role": "rosetta-mail", "jwt": "jeton-signe-de-sebastien"}]
-    assert logins == [("sebastien@berard.me", "secret")]
+    assert logins == [("sebastien@example.test", "secret")]
     assert fake.logged_out
 
 
@@ -120,7 +121,7 @@ def test_claim_mail_local_prime_sur_le_pliage(boite):
         mail.mail_dossiers()
     finally:
         current_claims.reset(token)
-    assert logins[-1][0] == "sebastien@berard.me"
+    assert logins[-1][0] == "sebastien@example.test"
 
 
 def test_cache_evite_un_login_coffre_par_appel(boite):
@@ -179,7 +180,7 @@ def test_brouillon_reponse_chaine_le_fil(boite):
     fake, _, _ = boite
     fake.messages[b"7"] = (b"1 (UID 7 FLAGS ()", ORIGINAL)
     out = mail.mail_brouillon(corps="On signe.", en_reponse_a="7")
-    assert out["dossier"] == "Drafts" and out["de"] == "sebastien@berard.me"
+    assert out["dossier"] == "Drafts" and out["de"] == "sebastien@example.test"
     folder, flags, raw = fake.appended[0]
     assert folder == "Drafts" and "Draft" in flags
     import email as email_lib
@@ -189,7 +190,7 @@ def test_brouillon_reponse_chaine_le_fil(boite):
     assert draft["In-Reply-To"] == "<orig-123@exemple.fr>"
     assert draft["References"].split() == ["<fil-0@exemple.fr>", "<orig-123@exemple.fr>"]
     assert draft["Subject"] == "Re: Devis toiture"
-    assert draft["From"] == "sebastien@berard.me"
+    assert draft["From"] == "sebastien@example.test"
 
 
 def test_brouillon_sans_destinataire(boite):
@@ -212,14 +213,14 @@ def ovh(boite, monkeypatch):
             return httpx.Response(200, json=[{"id": "P1"}])
         if path.endswith("/account"):
             return httpx.Response(200, json=[
-                {"id": "A-seb", "currentState": {"email": "sebastien@berard.me"}},
-                {"id": "A-lau", "currentState": {"email": "laurine@berard.me"}}])
+                {"id": "A-seb", "currentState": {"email": "sebastien@example.test"}},
+                {"id": "A-lau", "currentState": {"email": "laurine@example.test"}}])
         if path.endswith("/alias") and request.method == "GET":
             return httpx.Response(200, json=[
                 {"id": "AL1", "resourceStatus": "READY", "currentState": {
-                    "alias": {"name": "temu@berard.me"}, "target": {"id": "A-seb"}}},
+                    "alias": {"name": "temu@example.test"}, "target": {"id": "A-seb"}}},
                 {"id": "AL2", "resourceStatus": "READY", "currentState": {
-                    "alias": {"name": "lau-shop@berard.me"}, "target": {"id": "A-lau"}}}])
+                    "alias": {"name": "lau-shop@example.test"}, "target": {"id": "A-lau"}}}])
         if path.endswith("/alias") and request.method == "POST":
             posted.append(json.loads(request.content))
             return httpx.Response(202, json={"id": "NEW"})
@@ -234,13 +235,13 @@ def ovh(boite, monkeypatch):
 
 def test_alias_liste_ne_montre_que_les_siens(ovh):
     rows = mail.mail_alias_liste()
-    assert [r["alias"] for r in rows] == ["temu@berard.me"]
+    assert [r["alias"] for r in rows] == ["temu@example.test"]
 
 
 def test_alias_creer_cible_sa_propre_boite(ovh):
     posted, _ = ovh
     out = mail.mail_alias_creer("wish")
-    assert out["alias"] == "wish@berard.me" and out["vers"] == "sebastien@berard.me"
+    assert out["alias"] == "wish@example.test" and out["vers"] == "sebastien@example.test"
     assert posted[0]["targetSpec"]["targetId"] == "A-seb"
 
 

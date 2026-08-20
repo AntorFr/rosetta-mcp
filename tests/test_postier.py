@@ -42,8 +42,10 @@ class FakeImap:
 
 @pytest.fixture()
 def guichet(monkeypatch):
-    monkeypatch.setenv("POSTIER_FROM", "nestor@berard.me")
+    monkeypatch.setenv("POSTIER_FROM", "nestor@example.test")
     monkeypatch.setenv("POSTIER_PASSWORD", "secret")
+    # Plus de défaut : sans allowlist déclarée, `postier` refuse TOUT (fail-closed).
+    monkeypatch.setenv("POSTIER_ALLOWED", "*@example.test")
     envois, copies = [], []
     postier._smtp_factory = lambda: FakeSmtp(envois)
     postier._imap_factory = lambda: FakeImap(copies)
@@ -56,19 +58,19 @@ def guichet(monkeypatch):
 
 def test_expediteur_gele_et_copie_sent(guichet):
     envois, copies = guichet
-    out = postier.envoyer_mail("sebastien@berard.me", "Certificat NAS",
+    out = postier.envoyer_mail("sebastien@example.test", "Certificat NAS",
                                "Il expire vendredi.")
     assert out["envoyé"] is True and out["copie"] == "copié dans Sent"
     assert copies == ["Sent"]
     msg = envois[0]
-    assert msg["From"] == "nestor@berard.me"  # l'env décide, pas l'appelant
-    assert msg["To"] == "sebastien@berard.me"
+    assert msg["From"] == "nestor@example.test"  # l'env décide, pas l'appelant
+    assert msg["To"] == "sebastien@example.test"
     assert "Il expire vendredi." in msg.get_content()
 
 
 def test_hors_liste_blanche_rien_ne_part(guichet):
     envois, _ = guichet
-    out = postier.envoyer_mail("sebastien@berard.me, evil@ailleurs.com",
+    out = postier.envoyer_mail("sebastien@example.test, evil@ailleurs.com",
                                "fuite", "…")
     assert isinstance(out, str) and "evil@ailleurs.com" in out
     assert envois == []  # un seul intrus fait échouer TOUT l'envoi
@@ -76,7 +78,7 @@ def test_hors_liste_blanche_rien_ne_part(guichet):
 
 def test_liste_blanche_extensible_par_env(guichet, monkeypatch):
     envois, _ = guichet
-    monkeypatch.setenv("POSTIER_ALLOWED", "*@berard.me, ecole@ville.fr")
+    monkeypatch.setenv("POSTIER_ALLOWED", "*@example.test, ecole@ville.fr")
     out = postier.envoyer_mail("ecole@ville.fr", "Absence", "Émilie est malade.")
     assert out["envoyé"] is True and envois
 
@@ -86,11 +88,11 @@ def test_quota_fenetre_glissante(guichet, monkeypatch):
     monkeypatch.setenv("POSTIER_MAX_PER_HOUR", "2")
     now = time.time()
     postier._sent_at[:] = [now - 10, now - 20]
-    out = postier.envoyer_mail("sebastien@berard.me", "un de trop", "…")
+    out = postier.envoyer_mail("sebastien@example.test", "un de trop", "…")
     assert isinstance(out, str) and "quota" in out and envois == []
     # les envois d'il y a plus d'une heure ne comptent plus
     postier._sent_at[:] = [now - 4000, now - 20]
-    assert postier.envoyer_mail("sebastien@berard.me", "ça repart", "…")["envoyé"]
+    assert postier.envoyer_mail("sebastien@example.test", "ça repart", "…")["envoyé"]
 
 
 def test_copie_sent_en_echec_reste_une_information(guichet):
@@ -100,6 +102,6 @@ def test_copie_sent_en_echec_reste_une_information(guichet):
         raise OSError("imap down")
 
     postier._imap_factory = casse
-    out = postier.envoyer_mail("laurine@berard.me", "quand même", "parti !")
+    out = postier.envoyer_mail("laurine@example.test", "quand même", "parti !")
     assert out["envoyé"] is True and envois
     assert "échec" in out["copie"]

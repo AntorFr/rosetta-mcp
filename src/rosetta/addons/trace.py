@@ -108,7 +108,7 @@ def _ign_alti_url() -> str:
 
 
 def _external_url() -> str:
-    return os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me")
+    return os.environ.get("ROSETTA_EXTERNAL_URL", "")
 
 
 # The only foot profile BRouter ships; `trekking` is a bicycle profile, and

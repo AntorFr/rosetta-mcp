@@ -359,9 +359,9 @@ answers with a 307 redirect.
 | Env | Default | Purpose |
 |---|---|---|
 | `ROSETTA_AUTH` | `oidc` | `off` disables auth (local dev only) |
-| `ROSETTA_ISSUER` | `https://auth.berard.me` | OIDC issuer (token `iss`) |
+| `ROSETTA_ISSUER` | *(required)* | OIDC issuer (token `iss`). No default: one deployment's URL baked into a public image is useless to anyone else. |
 | `ROSETTA_AUDIENCE` | external URL | required token `aud` |
-| `ROSETTA_EXTERNAL_URL` | `https://rosetta.mcp.berard.me` | public URL (RFC 9728 metadata) |
+| `ROSETTA_EXTERNAL_URL` | *(required)* | public URL of this hub (RFC 9728 metadata, OAuth callbacks). No default, same reason. |
 | `ROSETTA_JWKS_URI` | `<issuer>/jwks.json` | JWKS endpoint override |
 | `ROSETTA_ADDONS` | all discovered | comma-separated allowlist |
 | `ROSETTA_GIT_REPOS` | *(empty)* | `git` addon: optional `owner/name` allowlist for the smart-HTTP proxy. Empty = every repository the App can reach; the ref rules apply either way |

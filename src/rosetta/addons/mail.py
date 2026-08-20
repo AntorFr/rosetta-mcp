@@ -99,7 +99,7 @@ def _caller() -> tuple[str, str] | str:
     token = current_token.get()
     if not token:
         return "token brut indisponible — hub démarré sans middleware d'auth ?"
-    vault = os.environ.get("MAIL_VAULT_ADDR", "https://vault.berard.me").rstrip("/")
+    vault = os.environ.get("MAIL_VAULT_ADDR", "").rstrip("/")
     mount = os.environ.get("MAIL_VAULT_MOUNT", "jwt-authelia")
     role = os.environ.get("MAIL_VAULT_ROLE", "rosetta-mail")
     with httpx.Client(transport=_vault_transport, timeout=TIMEOUT) as client:

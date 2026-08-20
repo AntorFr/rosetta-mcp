@@ -508,7 +508,7 @@ et `/github/` (MCP) → **401**. **Reste : l'enrôlement navigateur de Monsieur*
 > Indice décisif : le build `main` du **même commit** était vert. `gh run rerun --failed`
 > suffit — ne pas partir chercher un bug qui n'existe pas.
 
-**État :** **v0.1.0 EN PROD** sur `https://rosetta.mcp.berard.me` (tantive, chart
+**État :** **v0.1.0 EN PROD** sur `$ROSETTA_EXTERNAL_URL` (tantive, chart
 `rosetta-mcp` 0.1.0, image GHCR multi-arch). Hub MCP modulaire : addons `maps` +
 `transit` montés par chemin (streamable HTTP stateless), isolation par addon
 (/health par-addon), clés d'API via `openbao-tantive` (`llm/google-api`,
@@ -685,13 +685,13 @@ un couple `(value, unit)` où `unit` est une **puissance de dix** — 78192/-3 =
       d'ingress non plus — l'ingress principal est un catch-all `/` (relu, pas supposé)
       et l'addon n'a aucune route d'enrôlement. Vérifié en prod, e2e compris
 - [ ] **Withings — l'enrôlement et l'e2e restent à faire.** Ouvrir
-      `https://rosetta.mcp.berard.me/withings/enroll` au navigateur (SSO → consentement
+      `$ROSETTA_EXTERNAL_URL/withings/enroll` au navigateur (SSO → consentement
       Withings), puis demander ses mesures à Alfred depuis la PWA : ça exige un **token
       humain**, donc c'est l'Alfred du pod qui déclenche le premier appel réel.
       ⚠️ **Aucun appel réel à l'API Withings n'a encore eu lieu** : la forme des réponses
       vient de la doc et d'`aiowithings`, pas d'un essai. C'est là que ça se vérifiera
 - [x] Withings déployé (2026-07-31) : app OAuth enregistrée par Sébastien (callback
-      `https://rosetta.mcp.berard.me/withings/callback`), `secret/apps/rosetta-mcp`
+      `$ROSETTA_EXTERNAL_URL/withings/callback`), `secret/apps/rosetta-mcp`
       (`withings_client_id`/`_secret`) posé à la main dans OpenBao, image 0.6.0 GHCR
       multi-arch, manifeste tantive bumpé (env + externalSecrets + routes d'enrôlement,
       réplique unique commentée). Vérifié live : `/health` → 4 addons `ok` en 0.6.0,

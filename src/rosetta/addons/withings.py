@@ -261,7 +261,7 @@ def _write_user(sub: str, record: dict) -> None:
 
 
 def _enrol_hint(sub: str) -> str:
-    external = os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me")
+    external = os.environ.get("ROSETTA_EXTERNAL_URL", "")
     return (f"aucun compte Withings enrôlé pour « {sub} ». Ouvrir "
             f"{external.rstrip('/')}/withings/enroll dans un navigateur pour "
             "autoriser l'accès (une seule fois).")
@@ -788,7 +788,7 @@ def _remote_user(request) -> str | None:
 
 
 def _redirect_uri() -> str:
-    external = os.environ.get("ROSETTA_EXTERNAL_URL", "https://rosetta.mcp.berard.me")
+    external = os.environ.get("ROSETTA_EXTERNAL_URL", "")
     return f"{external.rstrip('/')}/withings/callback"
 
 
