@@ -32,6 +32,22 @@ ET rappelle l'approbation côté installation — permission ajoutée à l'App p
 l'utilisateur le 14/08. Garde relue dans la même passe : `github_guard.py` (cockpit)
 et `SKIPPY-POD.md` (agent-pods). Reste : e2e réel depuis le pod, bouclier armé.
 
+**`mail` → `courrier` — 0.21.0 : la boîte se nomme, enfin (2026-08-25)**. L'addon
+et ses sept outils passent en `courrier_*`, et **chaque description nomme la boîte
+qu'elle ouvre** au lieu de dire « la boîte de l'appelant ». Ce n'est pas cosmétique :
+`google` lisait Gmail, `mail` lisait la boîte de la maison, et les deux ne se
+distinguaient que par la **langue** de leurs noms d'outils (`mail_search` contre
+`mail_recherche`) — un discriminant nul pour un agent. Le coût s'est vu en août : un
+agent a rapporté « je n'arrive pas à accéder aux mails » en parlant de CETTE boîte
+pendant que Gmail répondait parfaitement, a conclu que le coffre était en panne, et
+a failli faire réparer ce qui marchait. Les deux côtés sont désormais explicites
+(`google` dit « PAS la boîte de la maison », `courrier` dit « PAS Gmail »), et tous
+deux invitent à **demander de quelle boîte il s'agit** quand la question ne le dit pas.
+⚠️ Le montage bouge avec le nom : `/mail` → `/courrier`. Les `.mcp.json` des trois
+corps suivent dans le même geste ; les variables d'env (`MAIL_*`) ne bougent PAS —
+elles sont de la config serveur, jamais lues par un agent, et les renommer aurait
+ajouté un risque de rollout pour zéro gain sur le défaut réel.
+
 **`mail` — 0.17.0 : la capacité suit la session (2026-08-13)**. Plus AUCUN mot de
 passe de boîte dans le pod : l'addon échange le bearer de l'appelant contre un
 token coffre (OpenBao auth JWT fédérée Authelia, rôle `rosetta-mail`) dont la

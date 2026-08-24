@@ -1,4 +1,15 @@
-"""`mail` addon - the family's own mailboxes (OVH Zimbra), user-data class.
+"""`courrier` addon - the family's own mailboxes (OVH Zimbra), user-data class.
+
+⚠️ NAMING - a safety property here, not cosmetics. Two addons of this hub read
+mail, and they open DIFFERENT mailboxes: `google` is Gmail, `courrier` is the
+household's own @<MAIL_DOMAIN> boxes. Both were once named `mail_*`, told apart
+only by the language their tool names happened to be written in (`mail_search`
+vs `mail_recherche`) - which is no discriminator at all for an agent. It cost
+eleven days of misdiagnosis in August 2026: an agent reported "I cannot read
+the mail" meaning THIS box, while Gmail answered perfectly, and the wrong
+subsystem got blamed for it. Hence `courrier_*`, and hence every tool
+description below NAMES its mailbox instead of saying "the caller's box".
+Keep it that way: whatever an agent reads must say WHICH box it opens.
 
 The sovereign twin of `google`: same philosophy (read + **drafts only** -
 deliberately no send, no delete: the human reviews the draft in their client
@@ -6,7 +17,7 @@ and presses the button), but over plain IMAP against the household's Zimbra
 platform, plus the one thing Gmail never had - **disposable aliases** through
 the OVH v2 API (create one per merchant, burn it at the first spam).
 
-Identity: `identity = "user"` - the hub refuses machine tokens on /mail, so
+Identity: `identity = "user"` - the hub refuses machine tokens on /courrier, so
 every call carries a human subject. The mailbox is DERIVED from that identity
 (`mail_local` claim, an Authelia CEL attribute = the email local part; the
 accent-folded `preferred_username` is the transition fallback), and the
@@ -53,10 +64,10 @@ identity = "user"
 
 required_env = ["MAIL_IMAP_HOST", "MAIL_DOMAIN"]
 
-mcp = new_server("mail")
+mcp = new_server("courrier")
 
 OVH_API = "https://eu.api.ovh.com"
-BODY_MAX = 20_000  # characters of body text returned by mail_lire
+BODY_MAX = 20_000  # characters of body text returned by courrier_lire
 PW_CACHE_TTL = 600  # seconds a fetched mailbox password stays in memory
 
 # Test seams: tests swap the IMAP factory and the httpx transports, no network.
@@ -172,8 +183,10 @@ _FLAGS = re.compile(rb"FLAGS \(([^)]*)\)")
 # ---- tools : lecture --------------------------------------------------------
 
 @mcp.tool()
-def mail_dossiers() -> list[str] | str:
-    """Liste les dossiers de la boîte mail de l'appelant (INBOX, Sent, Drafts…)."""
+def courrier_dossiers() -> list[str] | str:
+    """Liste les dossiers de la boîte PERSONNELLE @<domaine familial> de
+    l'appelant, la messagerie de la maison (INBOX, Sent, Drafts…).
+    ⚠️ Ce n'est PAS Gmail : pour Gmail, voir l'addon `google` (mail_search…)."""
     creds = _caller()
     if isinstance(creds, str):
         return creds
@@ -193,13 +206,17 @@ def mail_dossiers() -> list[str] | str:
 
 
 @mcp.tool()
-def mail_recherche(dossier: str = "INBOX", de: str = "", sujet: str = "",
+def courrier_recherche(dossier: str = "INBOX", de: str = "", sujet: str = "",
                    depuis_jours: int = 0, non_lus: bool = False,
                    limite: int = 20) -> list[dict] | str:
-    """Cherche dans la boîte de l'appelant. Filtres cumulables : expéditeur
+    """Cherche dans la boîte PERSONNELLE @<domaine familial> de l'appelant — la
+    messagerie de la maison, PAS Gmail (Gmail = `mail_search` de l'addon
+    `google`). Si Monsieur dit juste « mes mails » sans préciser, demander de
+    quelle boîte il parle plutôt que d'en choisir une : les deux existent.
+    Filtres cumulables : expéditeur
     (`de`), texte du sujet (`sujet`), fenêtre en jours (`depuis_jours`),
     non-lus seulement (`non_lus`). Rend les plus récents d'abord, avec l'`uid`
-    à passer à mail_lire / mail_brouillon."""
+    à passer à courrier_lire / courrier_brouillon."""
     creds = _caller()
     if isinstance(creds, str):
         return creds
@@ -238,9 +255,10 @@ def mail_recherche(dossier: str = "INBOX", de: str = "", sujet: str = "",
 
 
 @mcp.tool()
-def mail_lire(uid: str, dossier: str = "INBOX") -> dict | str:
-    """Lit un message complet (en-têtes + corps texte) par son `uid`.
-    Ne marque PAS le message comme lu."""
+def courrier_lire(uid: str, dossier: str = "INBOX") -> dict | str:
+    """Lit un message complet (en-têtes + corps texte) par son `uid`, dans la
+    boîte @<domaine familial> — pas Gmail. L'`uid` vient de courrier_recherche
+    et n'a aucun sens dans l'autre boîte. Ne marque PAS le message comme lu."""
     creds = _caller()
     if isinstance(creds, str):
         return creds
@@ -272,10 +290,14 @@ def mail_lire(uid: str, dossier: str = "INBOX") -> dict | str:
 # ---- tools : brouillons -----------------------------------------------------
 
 @mcp.tool()
-def mail_brouillon(a: str = "", sujet: str = "", corps: str = "",
+def courrier_brouillon(a: str = "", sujet: str = "", corps: str = "",
                    cc: str = "", en_reponse_a: str = "",
                    dossier_source: str = "INBOX") -> dict | str:
-    """Dépose un BROUILLON dans la boîte de l'appelant (jamais d'envoi : le
+    """Dépose un BROUILLON dans la boîte @<domaine familial> de l'appelant —
+    PAS dans Gmail (pour Gmail : `mail_draft` de l'addon `google`). Le
+    brouillon apparaîtra dans le client de CETTE boîte, et nulle part ailleurs :
+    se tromper d'addon, c'est écrire une réponse que le destinataire du fil
+    d'origine ne verra jamais. (Jamais d'envoi : le
     brouillon se relit et s'envoie depuis le client mail). Pour répondre à un
     message, passer son `uid` dans `en_reponse_a` : destinataire, sujet et fil
     de discussion sont repris de l'original (`a` explicite prime)."""
@@ -380,8 +402,10 @@ def _my_aliases(pid: str, account_id: str) -> list[dict] | str:
 
 
 @mcp.tool()
-def mail_alias_liste() -> list[dict] | str:
-    """Liste les alias jetables qui pointent vers la boîte de l'appelant."""
+def courrier_alias_liste() -> list[dict] | str:
+    """Liste les alias jetables qui pointent vers la boîte @<domaine familial>
+    de l'appelant. Propre à la messagerie de la maison : Gmail n'a pas d'alias
+    jetables, ces outils n'ont aucun équivalent côté `google`."""
     creds = _caller()
     if isinstance(creds, str):
         return creds
@@ -392,10 +416,10 @@ def mail_alias_liste() -> list[dict] | str:
 
 
 @mcp.tool()
-def mail_alias_creer(nom_local: str) -> dict | str:
+def courrier_alias_creer(nom_local: str) -> dict | str:
     """Crée un alias jetable `<nom_local>@<domaine>` vers la boîte de
     l'appelant (anti-spam : un alias par marchand, à supprimer au premier
-    abus via mail_alias_supprimer)."""
+    abus via courrier_alias_supprimer)."""
     creds = _caller()
     if isinstance(creds, str):
         return creds
@@ -415,7 +439,7 @@ def mail_alias_creer(nom_local: str) -> dict | str:
 
 
 @mcp.tool()
-def mail_alias_supprimer(nom_local: str) -> dict | str:
+def courrier_alias_supprimer(nom_local: str) -> dict | str:
     """Supprime un alias jetable de l'appelant (le marchand a vendu l'adresse ?
     l'alias meurt, la boîte survit). Ne peut supprimer QUE ses propres alias."""
     creds = _caller()

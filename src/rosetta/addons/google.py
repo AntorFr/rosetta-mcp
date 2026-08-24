@@ -294,7 +294,13 @@ def _pdf_to_text(raw: bytes) -> str:
 
 @mcp.tool()
 async def mail_search(query: str, max_results: int = 10) -> dict:
-    """Recherche dans Gmail (syntaxe Gmail : from:, subject:, after:, is:unread…).
+    """Recherche dans GMAIL (syntaxe Gmail : from:, subject:, after:, is:unread…).
+
+    ⚠️ Gmail, PAS la boîte personnelle @<domaine familial> : celle-là est
+    l'addon `courrier` (`courrier_recherche`). Les deux existent et ne
+    contiennent pas les mêmes messages. Si Monsieur dit juste « mes mails »
+    sans préciser, lui demander laquelle plutôt que d'en choisir une.
+
 
     query : la recherche (ex. « from:airbnb after:2026/07/01 »).
     max_results : nombre de messages (défaut 10, max 25).
@@ -451,7 +457,13 @@ async def mail_attachment(message_id: str, attachment_id: str | None = None,
 async def mail_draft(body: str, to: str | None = None, subject: str | None = None,
                      thread_id: str | None = None,
                      reply_to_message_id: str | None = None) -> dict:
-    """Dépose un BROUILLON dans Gmail — jamais d'envoi (c'est l'utilisateur qui clique).
+    """Dépose un BROUILLON dans GMAIL — jamais d'envoi (c'est l'utilisateur qui clique).
+
+    ⚠️ Dans Gmail, PAS dans la boîte @<domaine familial> (celle-là :
+    `courrier_brouillon`). Le brouillon n'apparaîtra que dans le client de
+    CETTE boîte : se tromper d'addon, c'est écrire une réponse que le
+    destinataire du fil d'origine ne verra jamais.
+
 
     POUR RÉPONDRE À UN MAIL, ne renseigner que `reply_to_message_id` et `body` : le
     serveur dérive le fil, le destinataire et l'objet. C'est la voie à préférer, et

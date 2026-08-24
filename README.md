@@ -117,7 +117,7 @@ because the upstream quota, 15 product reads and 10 searches per minute, is
 counted per **IP** — i.e. per deployment, shared with every other service
 behind the same egress — and exceeding it earns a ban for all of them),
 `git` (a smart-HTTP proxy rather than a tool surface — see its own section below),
-`mail` (user-data class: the family's own Zimbra mailboxes over plain IMAP —
+`courrier` (user-data class: the family's own Zimbra mailboxes over plain IMAP —
 search / read / **drafts only**, the same guard as `google`: no send, no
 delete. A draft reply chains `In-Reply-To`/`References` from the original and
 honours `Reply-To` over `From`, so it lands in the recipient's thread, not
@@ -125,9 +125,14 @@ beside it. Plus **disposable aliases** through the OVH v2 API, self-service
 *bounded by construction*: every tool only lists, creates or deletes aliases
 pointing at the CALLER's own mailbox — create one per merchant, burn it at the
 first spam. The mailbox is derived from the token identity; passwords are
-provisioned server-side as `MAIL_PASSWORD_<user>`, agents never see them), and
+read from the vault with the caller's own token, agents never see them.
+**Named `courrier`, not `mail`, on purpose**: `google` reads Gmail and this one
+reads a different mailbox entirely. While both were `mail_*`, told apart only by
+the language of their tool names, agents conflated them — and an outage on one was
+reported as "the mail is down" while the other answered fine. Every tool
+description here names the mailbox it opens), and
 `postier` (the ONE sending capability of the hub, machine class — built for
-the household assistant, whom `/mail` refuses by identity: the sender is
+the household assistant, whom `/courrier` refuses by identity: the sender is
 frozen to `POSTIER_FROM`, recipients must match `POSTIER_ALLOWED` (default:
 the family domain), an hourly sliding-window quota keeps a looping agent
 polite, and every send is logged then copied to Sent over IMAP. A hijacked

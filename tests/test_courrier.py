@@ -19,7 +19,7 @@ import json
 import httpx
 import pytest
 
-from rosetta.addons import mail
+from rosetta.addons import courrier
 from rosetta.auth import current_claims, current_token
 
 
@@ -88,25 +88,25 @@ def boite(monkeypatch):
             return httpx.Response(200, json={"data": {"data": {"password": "secret"}}})
         return httpx.Response(403, json={"errors": ["permission denied"]})
 
-    mail._imap_factory = factory
-    mail._vault_transport = httpx.MockTransport(vault_handler)
-    mail._ovh_cache.clear()
-    mail._pw_cache.clear()
+    courrier._imap_factory = factory
+    courrier._vault_transport = httpx.MockTransport(vault_handler)
+    courrier._ovh_cache.clear()
+    courrier._pw_cache.clear()
     t_claims = current_claims.set({"preferred_username": "Sébastien", "sub": "uuid-x"})
     t_token = current_token.set("jeton-signe-de-sebastien")
     yield fake, logins, vault_logins
     current_claims.reset(t_claims)
     current_token.reset(t_token)
-    mail._imap_factory = None
-    mail._transport = None
-    mail._vault_transport = None
-    mail._ovh_cache.clear()
-    mail._pw_cache.clear()
+    courrier._imap_factory = None
+    courrier._transport = None
+    courrier._vault_transport = None
+    courrier._ovh_cache.clear()
+    courrier._pw_cache.clear()
 
 
 def test_identite_accentuee_ouvre_le_coffre_puis_la_boite(boite):
     fake, logins, vault_logins = boite
-    assert mail.mail_dossiers() == ["INBOX", "Drafts"]
+    assert courrier.courrier_dossiers() == ["INBOX", "Drafts"]
     # le login coffre part avec LE token de l'appelant et le bon rôle
     assert vault_logins == [{"role": "rosetta-mail", "jwt": "jeton-signe-de-sebastien"}]
     assert logins == [("sebastien@example.test", "secret")]
@@ -118,7 +118,7 @@ def test_claim_mail_local_prime_sur_le_pliage(boite):
     token = current_claims.set({"preferred_username": "N'Importe Qui",
                                 "mail_local": "sebastien", "sub": "uuid-x"})
     try:
-        mail.mail_dossiers()
+        courrier.courrier_dossiers()
     finally:
         current_claims.reset(token)
     assert logins[-1][0] == "sebastien@example.test"
@@ -126,15 +126,15 @@ def test_claim_mail_local_prime_sur_le_pliage(boite):
 
 def test_cache_evite_un_login_coffre_par_appel(boite):
     _, _, vault_logins = boite
-    mail.mail_dossiers()
-    mail.mail_dossiers()
+    courrier.courrier_dossiers()
+    courrier.courrier_dossiers()
     assert len(vault_logins) == 1  # le second appel vit sur le cache
 
 
 def test_coffre_refuse_l_identite(boite):
     token = current_claims.set({"mail_local": "emilie", "sub": "uuid-e"})
     try:
-        message = mail.mail_dossiers()
+        message = courrier.courrier_dossiers()
     finally:
         current_claims.reset(token)
     # le faux coffre ne sert que creds/sebastien : emilie prend un 403 explicite
@@ -144,7 +144,7 @@ def test_coffre_refuse_l_identite(boite):
 def test_hors_contexte_utilisateur(boite):
     token = current_claims.set(None)
     try:
-        assert "identité introuvable" in mail.mail_dossiers()
+        assert "identité introuvable" in courrier.courrier_dossiers()
     finally:
         current_claims.reset(token)
 
@@ -158,7 +158,7 @@ def test_recherche_criteres_et_resume(boite):
     fake.messages[b"3"] = (
         b"2 (UID 3 FLAGS (\\Seen) BODY[HEADER.FIELDS (FROM SUBJECT DATE)]",
         b"From: a@b.c\r\nSubject: Lu\r\n\r\n")
-    rows = mail.mail_recherche(de="facteur", non_lus=True, depuis_jours=7)
+    rows = courrier.courrier_recherche(de="facteur", non_lus=True, depuis_jours=7)
     flat = " ".join(str(a) for a in fake.search_args)
     assert "FROM" in flat and "UNSEEN" in flat and "SINCE" in flat
     # plus récents d'abord : uid 7 (jamais \Seen) puis 3 (lu)
@@ -170,7 +170,7 @@ def test_recherche_criteres_et_resume(boite):
 def test_lire_rend_le_corps_sans_marquer(boite):
     fake, _, _ = boite
     fake.messages[b"7"] = (b"1 (UID 7 FLAGS ()", ORIGINAL)
-    msg = mail.mail_lire("7")
+    msg = courrier.courrier_lire("7")
     assert msg["corps"].startswith("Bonjour")
     assert msg["message_id"] == "<orig-123@exemple.fr>"
     assert msg["pieces_jointes"] == []
@@ -179,7 +179,7 @@ def test_lire_rend_le_corps_sans_marquer(boite):
 def test_brouillon_reponse_chaine_le_fil(boite):
     fake, _, _ = boite
     fake.messages[b"7"] = (b"1 (UID 7 FLAGS ()", ORIGINAL)
-    out = mail.mail_brouillon(corps="On signe.", en_reponse_a="7")
+    out = courrier.courrier_brouillon(corps="On signe.", en_reponse_a="7")
     assert out["dossier"] == "Drafts" and out["de"] == "sebastien@example.test"
     folder, flags, raw = fake.appended[0]
     assert folder == "Drafts" and "Draft" in flags
@@ -194,7 +194,7 @@ def test_brouillon_reponse_chaine_le_fil(boite):
 
 
 def test_brouillon_sans_destinataire(boite):
-    assert "aucun destinataire" in mail.mail_brouillon(corps="perdu")
+    assert "aucun destinataire" in courrier.courrier_brouillon(corps="perdu")
 
 
 # ---- alias : le périmètre est l'appelant, pas la plateforme ------------------
@@ -229,33 +229,33 @@ def ovh(boite, monkeypatch):
             return httpx.Response(204)
         return httpx.Response(404, json={})
 
-    mail._transport = httpx.MockTransport(handler)
+    courrier._transport = httpx.MockTransport(handler)
     return posted, deleted
 
 
 def test_alias_liste_ne_montre_que_les_siens(ovh):
-    rows = mail.mail_alias_liste()
+    rows = courrier.courrier_alias_liste()
     assert [r["alias"] for r in rows] == ["temu@example.test"]
 
 
 def test_alias_creer_cible_sa_propre_boite(ovh):
     posted, _ = ovh
-    out = mail.mail_alias_creer("wish")
+    out = courrier.courrier_alias_creer("wish")
     assert out["alias"] == "wish@example.test" and out["vers"] == "sebastien@example.test"
     assert posted[0]["targetSpec"]["targetId"] == "A-seb"
 
 
 def test_alias_nom_fantaisiste_refuse(ovh):
-    assert "invalide" in mail.mail_alias_creer("Père Noël")
+    assert "invalide" in courrier.courrier_alias_creer("Père Noël")
 
 
 def test_alias_supprimer_refuse_celui_d_autrui(ovh):
     _, deleted = ovh
-    assert "aucun alias" in mail.mail_alias_supprimer("lau-shop")
+    assert "aucun alias" in courrier.courrier_alias_supprimer("lau-shop")
     assert deleted == []
 
 
 def test_alias_supprimer_le_sien(ovh):
     _, deleted = ovh
-    assert mail.mail_alias_supprimer("temu")["etat"] == "supprimé"
+    assert courrier.courrier_alias_supprimer("temu")["etat"] == "supprimé"
     assert deleted == ["AL1"]
