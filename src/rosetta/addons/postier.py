@@ -2,7 +2,7 @@
 
 Everything else in the mail family is read-or-draft by design; this module is
 the single, deliberately narrow exception, so that Nestor (a machine identity,
-which /mail refuses) can actually mail the household. The blast radius is
+which /courrier refuses) can actually mail the household. The blast radius is
 bounded by construction, not by trust:
 
   - the sender is FROZEN to `POSTIER_FROM` (the assistant's own mailbox) -
@@ -99,7 +99,7 @@ def envoyer_mail(a: str, sujet: str, corps: str, cc: str = "") -> dict | str:
     """Envoie un mail DEPUIS la boîte de l'assistant (expéditeur verrouillé).
     Destinataires limités à la famille (et aux adresses explicitement
     autorisées) ; quota horaire ; copie dans Sent. Pour écrire au nom d'un
-    humain, utiliser mail_brouillon de /mail : ici on n'usurpe personne."""
+    humain, utiliser courrier_brouillon de /courrier : ici on n'usurpe personne."""
     sender = os.environ["POSTIER_FROM"]
     recipients = [addr for _, addr in getaddresses([a] + ([cc] if cc else [])) if addr]
     if not recipients:
