@@ -1,6 +1,6 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-08-19
+> MàJ : 2026-08-25
 
 **`github` — 0.19.0 : `issue_comment`, répondre sans publier (2026-08-19)**. 5e outil
 d'écriture, et le premier dont la cible ordinaire est un dépôt TIERS (né du besoin de
@@ -40,8 +40,34 @@ policy TEMPLÉE n'ouvre que `creds/<mail_local>` — le coffre arbitre, pas le c
 claims policies déployés le 13/08 ; ⚠️ la variable CEL est `emails` au PLURIEL et
 validate-config ne compile PAS le CEL — banc docker local obligatoire). auth.py
 expose désormais le token brut (`current_token`) à côté des claims. Cache mdp 10
-min en mémoire. Reste : gestes coffre admin (mount jwt-authelia + rôle + policy
-templée — script remis à l'utilisateur), puis E2E via Alfred.
+min en mémoire.
+
+> ✅ **Gestes coffre FAITS, et bien faits** (relevés le 2026-08-24) : mount
+> `jwt-authelia` (discovery sur Authelia, `status: valid`), rôle `rosetta-mail`
+> (`bound_audiences` = l'audience du hub, `user_claim: mail_local`,
+> `token_policies: [mail-self]`), policy `mail-self` templée sur l'accessor du
+> mount, et les quatre `creds/<local>` peuplés. **Cette ligne a longtemps dit le
+> contraire** (« reste : gestes coffre admin »), et c'est elle qui a fait
+> diagnostiquer un coffre en panne alors qu'il était irréprochable. Un status
+> périmé ne se contente pas d'être faux : il oriente le prochain qui le lit.
+>
+> ☠️ **Le vrai blocage était ailleurs — corrigé le 2026-08-24.** `mail_local`
+> était déclaré en `custom_claims` mais **aucun scope ne le portait**. Authelia ne
+> copie un claim dans l'access token que « provided the relevant scope was
+> granted » et saute les autres **en silence** : le claim n'a donc jamais été émis
+> une seule fois, et `_caller()` se faisait refuser par le coffre en **HTTP 400**
+> (`user_claim` introuvable) à chaque appel. Correctif : un scope `mail` côté
+> Authelia + `agent-gw` 0.82.0 qui le demande. Déclarer un custom claim ne
+> l'accorde pas — retenir la distinction, elle ne produit aucun message d'erreur.
+>
+> ⚠️ Symptôme trompeur à connaître : Gmail (addon `google`) continuait de
+> fonctionner pendant toute la panne, parce qu'il se repère sur
+> `preferred_username` — standard, porté par `profile`, donc accordé. « Le mail
+> marche » et « le mail ne marche pas » étaient vrais en même temps, sur deux
+> boîtes différentes.
+
+Reste : E2E via Alfred après reconnexion PWA (les scopes accordés sont gelés dans
+le grant : un refresh ne suffit pas).
 
 **`mail` + `postier` — 0.16.0 : le courrier de la maison entre au hub (2026-08-13)**.
 Deux addons nés de la migration mailbox.org → OVH Zimbra de la veille.
