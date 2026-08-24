@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rosetta-mcp"
-version = "0.22.0"
+version = "0.22.1"
 description = "Rosetta - a modular MCP hub: many thin MCP servers (addons) behind one HTTP endpoint and one OIDC auth"
 readme = "README.md"
 license = "MIT"
