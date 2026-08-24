@@ -32,6 +32,20 @@ ET rappelle l'approbation côté installation — permission ajoutée à l'App p
 l'utilisateur le 14/08. Garde relue dans la même passe : `github_guard.py` (cockpit)
 et `SKIPPY-POD.md` (agent-pods). Reste : e2e réel depuis le pod, bouclier armé.
 
+**`google` — 0.22.0 : une troncature doit se voir, se mesurer et se rattraper (2026-08-25)**.
+`mail_thread` coupait le corps de chaque message à 3 000 caractères avec un marqueur
+muet — `[… tronqué]`, sans dire combien manquait ni comment l'obtenir. Un mail de
+réservation groupée SNCF y a perdu sa fin (les trajets d'octobre), et l'agent, faute
+de pouvoir mesurer la coupure, a **estimé le seuil au jugé et rapporté une panne**.
+Le plafond n'était pas le défaut : son opacité l'était.
+Donc : le marqueur porte désormais les deux tailles **et nomme le paramètre à
+relever** ; `mail_thread(thread_id, body_limit=…)` va de 500 à 40 000 par message,
+**bridé et non refusé** (une valeur absurde rend le plafond, pas une erreur) ; un
+budget total de 120 000 caractères borne le fil entier, réduit les derniers messages
+sans jamais en vider un ni en perdre un, et le signale dans `tronque`. 4 tests neufs.
+⚠️ Asymétrie constatée au passage et laissée telle quelle : `courrier_lire` rend
+20 000 caractères, parce qu'il rend **un** message quand `mail_thread` en rend N.
+
 **`mail` → `courrier` — 0.21.0 : la boîte se nomme, enfin (2026-08-25)**. L'addon
 et ses sept outils passent en `courrier_*`, et **chaque description nomme la boîte
 qu'elle ouvre** au lieu de dire « la boîte de l'appelant ». Ce n'est pas cosmétique :

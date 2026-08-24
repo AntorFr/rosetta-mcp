@@ -514,3 +514,82 @@ def test_mail_attachment_sniffs_mislabeled_pdf(enrolled, monkeypatch):
     out = run(google.mail_attachment("m1", "att-1"))
     assert "Avoir d'acompte : 42,00 EUR" in out["text"]
     assert "note" not in out
+
+
+# ---- mail_thread : une coupure doit se voir, se mesurer et se rattraper -------
+#
+# Le cas réel (août 2026) : un mail de réservation groupée SNCF coupé à 3000
+# caractères, dont la fin — les trajets d'octobre — manquait. Le marqueur ne
+# disait ni combien manquait ni comment l'obtenir : l'agent a estimé le seuil au
+# jugé et a rapporté une panne au lieu d'une troncature. Ce que ces tests
+# verrouillent, c'est donc moins le plafond que sa LISIBILITÉ et son issue.
+
+def _thread_with(bodies, thread_id="t42"):
+    def enc(text):
+        return base64.urlsafe_b64encode(text.encode()).decode()
+    return {"messages": [
+        {"id": f"m{i}", "payload": {
+            "mimeType": "text/plain",
+            "headers": [{"name": "Subject", "value": "Confirmation"},
+                        {"name": "From", "value": "sncf@exemple.fr"}],
+            "body": {"data": enc(b)},
+        }} for i, b in enumerate(bodies)]}
+
+
+def _thread_handler(bodies):
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        return httpx.Response(200, json=_thread_with(bodies))
+    return handler
+
+
+def test_thread_truncation_states_both_sizes_and_the_way_out(enrolled, monkeypatch):
+    """Un corps coupé annonce ce qu'il rend, ce qu'il y avait, et le paramètre à
+    relever. Sans ces trois-là, la troncature est une perte de données déguisée
+    en réponse — et c'est exactement ce qui s'est produit."""
+    monkeypatch.setattr(google, "_transport", mock(_thread_handler(["A" * 9000])))
+    out = run(google.mail_thread("t42"))
+    body = out["messages"][0]["body"]
+    assert "tronqué" in body
+    assert "4000" in body and "9000" in body      # rendu ET total, en clair
+    assert "body_limit" in body                   # l'issue est nommée
+    assert out["body_limit"] == 4000
+
+
+def test_thread_body_limit_recovers_the_tail(enrolled, monkeypatch):
+    """Le rattrapage promis par le marqueur doit exister pour de vrai."""
+    monkeypatch.setattr(google, "_transport", mock(_thread_handler(["A" * 9000])))
+    out = run(google.mail_thread("t42", body_limit=20000))
+    body = out["messages"][0]["body"]
+    assert "tronqué" not in body and len(body) == 9000
+
+
+def test_thread_body_limit_is_clamped_not_rejected(enrolled, monkeypatch):
+    """Une valeur absurde rend le plafond, jamais une erreur : un agent ne doit
+    pas avoir à comprendre un refus avant de réessayer."""
+    monkeypatch.setattr(google, "_transport", mock(_thread_handler(["A" * 100])))
+    assert run(google.mail_thread("t42", body_limit=10_000_000))["body_limit"] \
+        == google.THREAD_BODY_LIMIT_MAX
+    assert run(google.mail_thread("t42", body_limit=0))["body_limit"] \
+        == google.THREAD_BODY_LIMIT
+
+
+def test_thread_total_budget_shrinks_late_messages_and_says_so(enrolled, monkeypatch):
+    """Relever body_limit ne doit pas pouvoir faire exploser la réponse : le
+    budget total borne le fil, réduit les derniers messages, et LE DIT."""
+    bodies = ["B" * 40000] * 6          # 240 000 > THREAD_TOTAL_BUDGET
+    monkeypatch.setattr(google, "_transport", mock(_thread_handler(bodies)))
+    out = run(google.mail_thread("t42", body_limit=40000))
+    sizes = [len(m["body"]) for m in out["messages"]]
+    total = sum(sizes)
+    # Le budget n'est pas un maximum absolu : un plancher de 500 caractères par
+    # message le déborde volontairement, pour ne JAMAIS rendre un corps vide —
+    # un message réduit à rien serait indiscernable d'un message sans contenu.
+    # Le contrat est donc : budget + (plancher + marqueur) par message réduit.
+    assert total <= google.THREAD_TOTAL_BUDGET + 6 * (500 + 120)
+    assert sizes[:3] == [40000] * 3        # les premiers passent en entier
+    assert all(s < 700 for s in sizes[3:])  # les suivants sont réduits, pas vides
+    assert all(s > 0 for s in sizes)
+    assert "tronque" in out and "budget total" in out["tronque"]
+    assert len(out["messages"]) == 6                       # aucun message perdu

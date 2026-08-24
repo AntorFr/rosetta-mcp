@@ -193,13 +193,31 @@ def _extract_body(payload: dict) -> str:
     return ""
 
 
-def _truncate(text: str, limit: int = 3000) -> str:
+def _truncate(text: str, limit: int = 3000, *, param: str = "") -> str:
+    """Clip, and say so WITH NUMBERS - a silent cut is a data loss disguised as
+    an answer. The marker carries the sizes and, when the caller can lift the
+    cap, the exact parameter to raise: an agent that hits it must be able to
+    recover the tail without guessing the threshold (it did guess, in August
+    2026, and reported an outage instead of a truncation)."""
     text = text.strip()
-    return text if len(text) <= limit else text[:limit] + "\n[… tronqué]"
+    if len(text) <= limit:
+        return text
+    hint = f", rappeler avec {param}=<n> pour la suite" if param else ""
+    return (text[:limit]
+            + f"\n[… tronqué : {limit} caractères rendus sur {len(text)}{hint}]")
 
 
 # Attachment rendering budgets. Text is transcribed server-side and truncated;
 # raw retrieval hands back the bytes (base64) once, so it is capped hard.
+# mail_thread budgets. Per-message default stays modest because a thread returns
+# N bodies at once; but it is a PARAMETER, and the truncation marker names it -
+# a cap the caller cannot lift and cannot even measure is how a booking mail lost
+# its October legs in August 2026. The total budget keeps a long thread from
+# blowing the caller's context when body_limit is raised.
+THREAD_BODY_LIMIT = 4000
+THREAD_BODY_LIMIT_MAX = 40000
+THREAD_TOTAL_BUDGET = 120000
+
 ATTACHMENT_TEXT_LIMIT = 20000
 ATTACHMENT_RAW_MAX = 10 * 1024 * 1024
 _TEXT_MIMES = {"application/json", "application/xml"}
@@ -338,8 +356,18 @@ async def mail_search(query: str, max_results: int = 10) -> dict:
 
 
 @mcp.tool()
-async def mail_thread(thread_id: str) -> dict:
-    """Lit un fil Gmail complet, rendu lisible (expéditeur, date, texte de chaque message)."""
+async def mail_thread(thread_id: str, body_limit: int = THREAD_BODY_LIMIT) -> dict:
+    """Lit un fil GMAIL complet, rendu lisible (expéditeur, date, texte de chaque message).
+
+    ⚠️ Gmail, PAS la boîte @<domaine familial> : celle-là est `courrier_lire`.
+
+    body_limit : caractères rendus PAR MESSAGE (défaut 4000, max 40000). Un corps
+    coupé le dit avec ses tailles réelles — si un message est tronqué et que sa
+    fin compte (une réservation groupée, un long récapitulatif), rappeler cet
+    outil avec un `body_limit` plus grand plutôt que de conclure sur un texte
+    incomplet. Un fil entier reste borné à THREAD_TOTAL_BUDGET caractères : les
+    messages au-delà sont réduits, et le fil le signale dans `tronque`.
+    """
     auth = await _authed()
     if isinstance(auth, dict):
         return auth
@@ -349,17 +377,31 @@ async def mail_thread(thread_id: str) -> dict:
         data = r.json()
     if r.status_code != 200:
         return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+    # Clamp rather than reject: an agent asking for 10_000_000 gets the ceiling
+    # and a note, not an error it would have to understand before retrying.
+    per_msg = max(500, min(int(body_limit or THREAD_BODY_LIMIT), THREAD_BODY_LIMIT_MAX))
     messages = []
     subject = None
+    spent = 0
+    clipped_by_budget = 0
     for msg in data.get("messages") or []:
         payload = msg.get("payload") or {}
         subject = subject or _header(payload, "Subject")
+        # The per-message cap is the caller's; the total budget is the hard one.
+        # Later messages shrink rather than the whole call failing - a long thread
+        # must never be the reason a short answer becomes unreadable.
+        room = max(500, min(per_msg, THREAD_TOTAL_BUDGET - spent))
+        if room < per_msg:
+            clipped_by_budget += 1
+        body = _truncate(_extract_body(payload) or msg.get("snippet", ""),
+                         room, param="body_limit")
+        spent += len(body)
         entry = {
             "id": msg.get("id"),          # feeds mail_draft(reply_to_message_id=…)
             "from": _header(payload, "From"),
             "to": _header(payload, "To"),
             "date": _header(payload, "Date"),
-            "body": _truncate(_extract_body(payload) or msg.get("snippet", "")),
+            "body": body,
         }
         # Only when the sender asked to be answered elsewhere - the case that makes
         # a reply to `from` land nowhere. Free: format=full already carried it.
@@ -367,7 +409,14 @@ async def mail_thread(thread_id: str) -> dict:
         if reply_to:
             entry["reply_to"] = reply_to
         messages.append(entry)
-    return {"thread_id": thread_id, "subject": subject, "messages": messages}
+    out = {"thread_id": thread_id, "subject": subject,
+           "body_limit": per_msg, "messages": messages}
+    if clipped_by_budget:
+        out["tronque"] = (
+            f"{clipped_by_budget} message(s) réduits sous le budget total du fil "
+            f"({THREAD_TOTAL_BUDGET} caractères). Pour lire l'un d'eux en entier, "
+            "le demander seul via son `id`.")
+    return out
 
 
 @mcp.tool()
