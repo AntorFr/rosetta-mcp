@@ -67,8 +67,27 @@ thread, recipient and subject from the parent - `Reply-To` beating `From`) and a
 each answering with a stable `link`
 straight to the draft in the Gmail web UI (`ROSETTA_GMAIL_ACCOUNT` overrides the account
 index when the mailbox is not the browser's first) - plus
-Calendar list/create/update - deliberately **no send, no delete, no labels**:
-the guard is the tool surface itself. Attachments come back transcribed to text
+Calendar list/read/create/update - deliberately **no send, no delete, no labels**:
+the guard is the tool surface itself. `calendar_list` names the account's
+calendars with the access role on each, so a caller can *choose* where it reads
+and where it writes: every calendar tool takes a `calendar_id` (default
+`primary`, several comma-separated, or `*` for the whole account), and every
+event read carries the calendar it came from - the only way `calendar_update`
+can aim, an event id having no meaning outside its calendar. Events also carry
+and accept `visibility` (`private` hides the details from the other readers of a
+shared calendar) and **attendees**, the single place this addon touches a third
+party. `send_updates` picks who gets an invitation *mail*: the default
+`externalOnly` mails exactly the guests who have no Google Calendar and would
+otherwise be invited to nothing, `all` mails everyone on top of the calendar
+invitation, `none` mails no one. That makes an invitation the addon's **only
+outbound channel** - everywhere else "no send" is structural, guaranteed by the
+absence of a tool - and since recipient and text are both caller-chosen, it is by
+nature an exfiltration path. Nothing here can close it: *who* may be invited is
+contextual policy and belongs to the calling agent's guard (channel, human
+confirmation, allowlist) - the hub knows neither channel nor shield. Listing calendars needs
+the `calendar.calendarlist.readonly` scope, which `calendar.events` does not
+grant: an enrolment predating 0.23.0 is told to renew rather than handed an
+opaque 403. Attachments come back transcribed to text
 (PDF via pypdf) for reading, or as raw base64 (`raw=True`) for native storage. One-time per-user enrolment at
 `/google/enroll` stores the Google refresh token server-side under
 `ROSETTA_GOOGLE_DATA`), `withings` (user-data class, **read-only**: body

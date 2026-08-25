@@ -302,7 +302,7 @@ def test_no_send_tool_exists():
     assert tool_names == {
         "mail_search", "mail_thread", "mail_attachment",
         "mail_draft", "mail_drafts", "mail_draft_update",
-        "calendar_events", "calendar_create", "calendar_update",
+        "calendar_list", "calendar_events", "calendar_create", "calendar_update",
     }
     # The point of pinning the set: no send, no delete, no label tool ever slips in.
     assert not any(("send" in n) or ("delete" in n) or ("label" in n) for n in tool_names)
@@ -593,3 +593,181 @@ def test_thread_total_budget_shrinks_late_messages_and_says_so(enrolled, monkeyp
     assert all(s > 0 for s in sizes)
     assert "tronque" in out and "budget total" in out["tronque"]
     assert len(out["messages"]) == 6                       # aucun message perdu
+
+
+# -- Calendar : plusieurs agendas, visibilité, invités -----------------------
+
+def _cal_mock(monkeypatch, routes, captured=None):
+    """Mocks the token endpoint + a {path-suffix: response} routing table."""
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if captured is not None:
+            captured.append(request)
+        for suffix, payload in routes.items():
+            if suffix in str(request.url):
+                return httpx.Response(200, json=payload)
+        return httpx.Response(404, json={"error": {"message": "not found"}})
+    monkeypatch.setattr(google, "_transport", mock(handler))
+
+
+CALENDARS = {"items": [
+    {"id": "primary-id@gmail.com", "summary": "Sébastien", "primary": True,
+     "accessRole": "owner", "timeZone": "Europe/Paris"},
+    {"id": "famille@group.calendar.google.com", "summary": "Famille", "accessRole": "writer"},
+    {"id": "fr.french#holiday@group.v.calendar.google.com", "summary": "Jours fériés",
+     "accessRole": "reader"},
+]}
+
+
+def test_calendar_list_says_where_one_may_write(enrolled, monkeypatch):
+    _cal_mock(monkeypatch, {"/users/me/calendarList": CALENDARS})
+    out = run(google.calendar_list())
+    roles = {c["calendar_id"]: c["peut_ecrire"] for c in out["agendas"]}
+    assert roles["famille@group.calendar.google.com"] is True
+    # A subscribed holiday calendar is readable, never writable: saying so up front
+    # is the whole point - Google would only answer 403 at write time.
+    assert roles["fr.french#holiday@group.v.calendar.google.com"] is False
+    assert out["agendas"][0]["principal"] is True
+
+
+def test_calendar_list_names_the_stale_enrolment(enrolled, monkeypatch):
+    """A credential predating 0.23.0 lacks the calendarlist scope: it must say so
+    in French, not hand back an opaque Google 403."""
+    users = enrolled / "users"
+    (users / "sebastien.json").write_text(json.dumps({
+        "sub": "sebastien", "refresh_token": "rt-123",
+        "scopes": ["https://www.googleapis.com/auth/calendar.events"], "enrolled_at": 0,
+    }))
+    out = run(google.calendar_list())
+    assert "enroll" in out["error"] and "agendas" in out["error"]
+
+
+def test_calendar_id_with_a_hash_is_quoted(enrolled, monkeypatch):
+    """`...#holiday@group.v.calendar.google.com` raw in a path would end it and
+    open a URL fragment - the events call would silently hit the wrong resource."""
+    seen = []
+    _cal_mock(monkeypatch, {"/events": {"items": []}}, captured=seen)
+    run(google.calendar_events("2026-08-01T00:00:00+02:00", "2026-08-02T00:00:00+02:00",
+                               calendar_id="fr.french#holiday@group.v.calendar.google.com"))
+    url = str(seen[-1].url)
+    assert "%23holiday" in url and url.count("#") == 0
+
+
+def test_calendar_events_merges_and_tags_its_source(enrolled, monkeypatch):
+    """Several calendars in one call: sorted by start, and every event carries the
+    calendar it came from - calendar_update has no meaning without it."""
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if "famille" in str(request.url):
+            return httpx.Response(200, json={"items": [
+                {"id": "b", "summary": "Piscine",
+                 "start": {"dateTime": "2026-08-01T09:00:00+02:00"},
+                 "end": {"dateTime": "2026-08-01T10:00:00+02:00"}}]})
+        return httpx.Response(200, json={"items": [
+            {"id": "a", "summary": "Dîner", "visibility": "private",
+             "start": {"dateTime": "2026-08-01T20:00:00+02:00"},
+             "end": {"dateTime": "2026-08-01T22:00:00+02:00"},
+             "attendees": [{"email": "jean@x.fr", "responseStatus": "accepted"}]}]})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.calendar_events("2026-08-01T00:00:00+02:00", "2026-08-02T00:00:00+02:00",
+                                     calendar_id="primary, famille@group.calendar.google.com"))
+    assert [e["id"] for e in out["events"]] == ["b", "a"]      # 09:00 before 20:00
+    assert out["events"][0]["calendar_id"] == "famille@group.calendar.google.com"
+    assert out["events"][1]["visibility"] == "private"
+    assert out["events"][1]["attendees"][0]["email"] == "jean@x.fr"
+
+
+def test_calendar_events_star_fans_out_over_the_account(enrolled, monkeypatch):
+    seen = []
+    _cal_mock(monkeypatch, {"/users/me/calendarList": CALENDARS, "/events": {"items": []}},
+              captured=seen)
+    out = run(google.calendar_events("2026-08-01T00:00:00+02:00", "2026-08-02T00:00:00+02:00",
+                                     calendar_id="*"))
+    assert out["events"] == []
+    assert sum(1 for r in seen if "/events" in str(r.url)) == 3
+
+
+def test_calendar_events_reports_a_broken_calendar_rather_than_an_empty_day(enrolled, monkeypatch):
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if "boum" in str(request.url):
+            return httpx.Response(404, json={"error": {"message": "Not Found"}})
+        return httpx.Response(200, json={"items": [
+            {"id": "a", "summary": "Dîner", "start": {"date": "2026-08-01"},
+             "end": {"date": "2026-08-02"}}]})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.calendar_events("2026-08-01T00:00:00+02:00", "2026-08-02T00:00:00+02:00",
+                                     calendar_id="primary,boum@x.fr"))
+    assert len(out["events"]) == 1
+    assert "Not Found" in out["agendas_en_erreur"]["boum@x.fr"]
+
+
+def test_calendar_events_truncation_is_measured(enrolled, monkeypatch):
+    items = [{"id": str(n), "summary": "x", "start": {"dateTime": "2026-08-0%dT09:00:00+02:00" % (n + 1)},
+              "end": {"dateTime": "2026-08-0%dT10:00:00+02:00" % (n + 1)}} for n in range(5)]
+    _cal_mock(monkeypatch, {"/events": {"items": items}})
+    out = run(google.calendar_events("2026-08-01T00:00:00+02:00", "2026-08-09T00:00:00+02:00",
+                                     max_results=2))
+    assert len(out["events"]) == 2
+    assert "5" in out["note"] and "max_results" in out["note"]
+
+
+def test_calendar_create_targets_a_calendar_and_never_mails(enrolled, monkeypatch):
+    seen = []
+    _cal_mock(monkeypatch, {"/events": {"id": "ev1", "htmlLink": "https://cal"}}, captured=seen)
+    out = run(google.calendar_create(
+        "Réunion", "2026-08-01T10:00:00+02:00", "2026-08-01T11:00:00+02:00",
+        calendar_id="famille@group.calendar.google.com",
+        visibility="private", attendees="jean@x.fr, marie@y.fr"))
+    body = json.loads(seen[-1].read())
+    assert "famille%40group.calendar.google.com" in str(seen[-1].url)
+    assert body["visibility"] == "private"
+    assert body["attendees"] == [{"email": "jean@x.fr"}, {"email": "marie@y.fr"}]
+    # Default: mail exactly the guests who, without one, would see nothing at all.
+    assert "sendUpdates=externalOnly" in str(seen[-1].url)
+    assert out["calendar_id"] == "famille@group.calendar.google.com"
+    assert "hors Google Calendar" in out["invites"]
+
+
+def test_bad_attendee_is_refused_before_any_call(enrolled, monkeypatch):
+    seen = []
+    _cal_mock(monkeypatch, {"/events": {"id": "ev1"}}, captured=seen)
+    out = run(google.calendar_create("X", "2026-08-01", "2026-08-02",
+                                     attendees="Jean <jean@x.fr>"))
+    assert "invalide" in out["error"]
+    assert seen == []  # nothing left for Google
+
+
+def test_bad_visibility_is_refused(enrolled, monkeypatch):
+    _cal_mock(monkeypatch, {"/events": {"id": "ev1"}})
+    out = run(google.calendar_create("X", "2026-08-01", "2026-08-02", visibility="secret"))
+    assert "visibilité" in out["error"]
+
+
+def test_calendar_update_replaces_the_guest_list(enrolled, monkeypatch):
+    seen = []
+    _cal_mock(monkeypatch, {"/events": {"id": "ev1", "htmlLink": "https://cal"}}, captured=seen)
+    out = run(google.calendar_update("ev1", attendees="",
+                                     calendar_id="famille@group.calendar.google.com"))
+    body = json.loads(seen[-1].read())
+    assert body == {"attendees": []}          # emptied on purpose, not "nothing to do"
+    assert out["calendar_id"] == "famille@group.calendar.google.com"
+
+
+def test_send_updates_is_a_choice_and_a_bad_one_is_refused(enrolled, monkeypatch):
+    seen = []
+    _cal_mock(monkeypatch, {"/events": {"id": "ev1", "htmlLink": "https://cal"}}, captured=seen)
+    run(google.calendar_create("X", "2026-08-01", "2026-08-02",
+                               attendees="jean@x.fr", send_updates="all"))
+    assert "sendUpdates=all" in str(seen[-1].url)
+    run(google.calendar_create("X", "2026-08-01", "2026-08-02",
+                               attendees="jean@x.fr", send_updates="none"))
+    assert "sendUpdates=none" in str(seen[-1].url)
+    before = len(seen)
+    out = run(google.calendar_create("X", "2026-08-01", "2026-08-02", send_updates="parfois"))
+    assert "inconnu" in out["error"] and len(seen) == before  # refused before any call

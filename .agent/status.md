@@ -2,6 +2,33 @@
 
 > MàJ : 2026-08-25
 
+**`google` — 0.23.0 : plusieurs agendas, et le choix d'où l'on lit et d'où l'on écrit
+(2026-08-25)**. `calendar_list` rend les agendas du compte avec
+leur `accessRole` et un `peut_ecrire` explicite — un agenda abonné se voit refuser l'écriture
+par Google, autant le dire avant. Les trois autres outils prennent un `calendar_id` (défaut
+`primary`, plusieurs séparés par des virgules, ou `*` pour tout le compte), et **chaque
+événement rendu porte l'agenda d'où il vient** : sans ça `calendar_update` ne sait pas viser,
+un id d'événement n'existant que dans son agenda. Fan-out borné à 15 agendas, troncature
+mesurée et rattrapable, agenda en erreur nommé plutôt que confondu avec une journée vide.
+Les identifiants passent par `quote()` : `fr.french#holiday@…` cru dans un chemin ouvrirait
+un fragment d'URL.
+
+Aussi câblés : **`visibility`** (`private` masque le détail aux autres lecteurs d'un agenda
+partagé) et **`attendees`** — le seul endroit où cet addon touche un tiers.
+`send_updates` choisit qui reçoit un MAIL : défaut **`externalOnly`** = les invités hors
+Google Calendar, ceux qui sans mail ne verraient rien ; `all` = tout le monde en plus de
+l'invitation ; `none` = personne. C'est donc **le seul canal sortant** de l'addon — partout
+ailleurs le « pas d'envoi » est structurel, garanti par l'absence d'outil — et destinataire
+comme texte sont choisis par l'appelant : une invitation **est** un chemin d'exfiltration.
+Rien ici ne peut le fermer : **qui** peut être invité est une politique contextuelle, elle
+vit dans la garde de l'agent appelant (canal, bouclier, liste blanche). Le hub ne connaît ni
+l'un ni l'autre.
+
+⚠️ **Nouveau scope : `calendar.calendarlist.readonly`** — `calendar.events` n'ouvre pas la
+LISTE des agendas (vérifié dans la référence `calendarList.list`). **Ré-enrôlement obligatoire**
+via `/google/enroll` (`prompt=consent` est déjà là, le jeton neuf portera le scope). Un
+enrôlement antérieur se voit répondre « ré-enrôler », pas un 403 opaque.
+
 **`github` — 0.19.0 : `issue_comment`, répondre sans publier (2026-08-19)**. 5e outil
 d'écriture, et le premier dont la cible ordinaire est un dépôt TIERS (né du besoin de
 répondre à `kurrier-org/kurrier#556`). Pré-vol systématique avant le POST : il **refuse

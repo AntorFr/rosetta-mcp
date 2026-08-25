@@ -4,7 +4,19 @@ Contract (the guard IS the tool surface - deliberately narrow):
   - mail_search / mail_thread / mail_attachment : read-only Gmail
   - mail_drafts / mail_draft / mail_draft_update : list, read, create and amend
     DRAFTS - never sends, never deletes: no such tool exists
-  - calendar_events / calendar_create / calendar_update : no delete tool exists
+  - calendar_list : the account's calendars, so a caller can CHOOSE where it
+    reads and where it writes - every other calendar tool takes a `calendar_id`
+    (default "primary"), and every event read carries the calendar it came from
+  - calendar_events / calendar_create / calendar_update : no delete tool exists,
+    and no move-between-calendars tool either
+  - attendees ARE writable (0.23.0), and `send_updates` decides who gets an
+    invitation MAIL (default: the guests without a Google Calendar, who would
+    otherwise be invited to nothing). This is the addon's ONLY outbound channel -
+    everywhere else "no send" is structural, guaranteed by the absence of a tool.
+    Recipient and text are both caller-chosen, so an invitation is by nature an
+    exfiltration path. Nothing here can close it: WHO may be invited is contextual
+    policy and belongs to the calling agent's guard (channel, human confirmation,
+    allowlist) - the hub knows neither channel nor shield.
 
 Identity: `identity = "user"` - the hub refuses machine tokens on /google, so
 every call carries a human `sub` (Authelia). Google credentials are stored
@@ -16,6 +28,7 @@ which yields the per-user Google refresh token.
 Tool descriptions are in French - runtime UX for the household agents.
 """
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -27,7 +40,7 @@ import secrets
 import time
 import unicodedata
 from email.message import EmailMessage
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 from starlette.responses import HTMLResponse, RedirectResponse
@@ -57,6 +70,11 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/calendar.events",
+    # Read-only listing of the account's calendars - `calendar.events` grants event
+    # read/write on ALL calendars but never the LIST of them (verified against the
+    # calendarList.list reference). Added 0.23.0: an enrolment older than that lacks
+    # it, hence the explicit re-enrolment message rather than an opaque 403.
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
 ]
 
 DEFAULT_TZ = "Europe/Paris"
@@ -712,46 +730,296 @@ def _when(value: str) -> dict:
     return {"dateTime": value, "timeZone": os.environ.get("TZ", DEFAULT_TZ)}
 
 
-@mcp.tool()
-async def calendar_events(time_min: str, time_max: str, max_results: int = 25) -> dict:
-    """Liste les événements de l'agenda principal entre deux instants.
+def _cal_path(calendar_id: str) -> str:
+    """Base URL of one calendar. Every id reaching a Calendar URL goes through
+    here: an id is address-shaped, and the shared ones are worse -
+    `fr.french#holiday@group.v.calendar.google.com` carries a `#`, which raw in a
+    path ends it and opens a fragment. Quoting is not cosmetic."""
+    return f"{CALENDAR}/calendars/{quote(calendar_id.strip(), safe='')}"
 
-    time_min / time_max : ISO 8601 (ex. 2026-07-21T00:00:00+02:00).
+
+# Event `visibility`. `private` is the one that matters here: on a calendar shared
+# with someone else, a private event shows as busy and its details stay hidden -
+# `default` inherits the calendar's setting, which on a shared calendar usually
+# means everything is readable. `confidential` is a legacy alias of `private`,
+# accepted because Google still returns it on old events.
+VISIBILITIES = {"default", "public", "private", "confidential"}
+
+_EMAIL_RE = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
+
+# `calendar_id="*"` fans out one HTTP call per calendar: a Google account carries
+# holiday and subscribed calendars nobody asked for, so the fan-out is bounded.
+MAX_CALENDARS = 15
+
+CALENDARLIST_SCOPE = "https://www.googleapis.com/auth/calendar.calendarlist.readonly"
+
+_REENROL = (
+    "l'autorisation Google en cours ne couvre pas la LISTE des agendas : elle est "
+    "antérieure à cet outil. Ouvrir une fois {url}/google/enroll pour la renouveler "
+    "(le reste de l'agenda continue de marcher sans ça)."
+)
+
+
+def _reenrol_error() -> dict:
+    return {"error": _REENROL.format(url=os.environ.get("ROSETTA_EXTERNAL_URL", ""))}
+
+
+def _enrolled_scopes() -> list[str]:
+    """Scopes Google granted at the last enrolment, as stored. Empty when unknown -
+    an unknown scope set is never treated as a missing one: we let the API answer."""
+    sub = _current_sub()
+    if not sub:
+        return []
+    try:
+        with open(_user_file(sub)) as f:
+            return json.load(f).get("scopes") or []
+    except Exception:
+        return []
+
+
+def _items(value) -> list[str]:
+    """A list, or one string holding several entries separated by , ; or spaces."""
+    if value is None:
+        return []
+    items = [str(v) for v in value] if isinstance(value, (list, tuple)) \
+        else re.split(r"[\s,;]+", str(value))
+    return [i.strip() for i in items if i.strip()]
+
+
+def _guests(value) -> list[dict] | dict:
+    """Attendee emails -> Calendar API attendees, or an {'error': ...} dict.
+
+    Deliberately strict: an entry that is not plainly an address is refused rather
+    than passed on. A malformed attendee is not worth a silent 400 from Google, and
+    guessing what `Jean <j@x.fr>` meant is how an event lands on a stranger's
+    calendar."""
+    emails = _items(value)
+    bad = [e for e in emails if not _EMAIL_RE.match(e)]
+    if bad:
+        return {"error": "adresse(s) d'invité invalide(s) : %s — une adresse mail simple "
+                         "par invité, sans nom ni chevrons." % ", ".join(bad)}
+    seen, out = set(), []
+    for e in emails:
+        key = e.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append({"email": e})
+    return out
+
+
+def _visibility(value: str | None) -> str | dict | None:
+    if value is None:
+        return None
+    v = str(value).strip().lower()
+    if v not in VISIBILITIES:
+        return {"error": "visibilité « %s » inconnue : %s." % (value, " / ".join(sorted(VISIBILITIES)))}
+    return v
+
+
+def _read_guests(ev: dict) -> list[dict]:
+    out = []
+    for a in ev.get("attendees") or []:
+        who = {"email": a.get("email")}
+        if a.get("displayName"):
+            who["nom"] = a["displayName"]
+        if a.get("responseStatus"):
+            who["reponse"] = a["responseStatus"]
+        if a.get("organizer"):
+            who["organisateur"] = True
+        out.append(who)
+    return out
+
+
+async def _calendar_ids(http, headers) -> list[dict] | dict:
+    """The account's calendars, or an {'error': ...} dict."""
+    r = await http.get(f"{CALENDAR}/users/me/calendarList",
+                       params={"maxResults": 250, "showHidden": "false"}, headers=headers)
+    data = r.json()
+    if r.status_code in (401, 403):
+        return _reenrol_error()
+    if r.status_code != 200:
+        return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+    out = []
+    for cal in data.get("items") or []:
+        role = cal.get("accessRole")
+        entry = {
+            "calendar_id": cal.get("id"),
+            "nom": cal.get("summaryOverride") or cal.get("summary"),
+            "acces": role,
+            "peut_ecrire": role in ("owner", "writer"),
+        }
+        if cal.get("primary"):
+            entry["principal"] = True
+        if cal.get("timeZone"):
+            entry["fuseau"] = cal["timeZone"]
+        if cal.get("description"):
+            entry["description"] = cal["description"]
+        out.append(entry)
+    return out
+
+
+@mcp.tool()
+async def calendar_list() -> dict:
+    """Liste les agendas du compte : identifiant, nom, et si on peut y écrire.
+
+    L'identifiant rendu ici (`calendar_id`) est celui à repasser aux autres outils
+    d'agenda pour choisir OÙ lire et OÙ écrire. « primary » désigne toujours
+    l'agenda principal, sans avoir à le lister.
+
+    `peut_ecrire: false` = agenda en lecture seule (agenda partagé par un tiers,
+    jours fériés, abonnement) : y créer un événement sera refusé par Google.
     """
+    scopes = _enrolled_scopes()
+    if scopes and CALENDARLIST_SCOPE not in scopes:
+        return _reenrol_error()
     auth = await _authed()
     if isinstance(auth, dict):
         return auth
     _, headers = auth
     async with _client() as http:
-        r = await http.get(
-            f"{CALENDAR}/calendars/primary/events",
-            params={
-                "timeMin": time_min, "timeMax": time_max, "singleEvents": "true",
-                "orderBy": "startTime", "maxResults": max(1, min(int(max_results), 100)),
-            },
-            headers=headers,
-        )
-        data = r.json()
+        cals = await _calendar_ids(http, headers)
+    if isinstance(cals, dict):
+        return cals
+    return {"agendas": cals}
+
+
+async def _fetch_events(http, headers, cal_id, time_min, time_max, limit):
+    r = await http.get(
+        f"{_cal_path(cal_id)}/events",
+        params={"timeMin": time_min, "timeMax": time_max, "singleEvents": "true",
+                "orderBy": "startTime", "maxResults": limit},
+        headers=headers,
+    )
+    data = r.json()
     if r.status_code != 200:
-        return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+        return cal_id, [], dig(data, "error", "message", default=f"HTTP {r.status_code}")
     out = []
     for ev in data.get("items") or []:
-        out.append({
+        item = {
             "id": ev.get("id"),
+            "calendar_id": cal_id,
             "summary": ev.get("summary"),
             "start": dig(ev, "start", "dateTime", default=dig(ev, "start", "date")),
             "end": dig(ev, "end", "dateTime", default=dig(ev, "end", "date")),
             "location": ev.get("location"),
-        })
-    return {"events": out}
+        }
+        if ev.get("visibility") and ev["visibility"] != "default":
+            item["visibility"] = ev["visibility"]
+        guests = _read_guests(ev)
+        if guests:
+            item["attendees"] = guests
+        out.append(item)
+    return cal_id, out, None
+
+
+@mcp.tool()
+async def calendar_events(time_min: str, time_max: str, calendar_id: str = "primary",
+                          max_results: int = 25) -> dict:
+    """Liste les événements entre deux instants, sur un ou plusieurs agendas.
+
+    time_min / time_max : ISO 8601 (ex. 2026-07-21T00:00:00+02:00).
+    calendar_id : « primary » (défaut) = l'agenda principal ; un identifiant rendu
+      par `calendar_list` ; plusieurs séparés par des virgules ; ou « * » pour tous
+      les agendas du compte.
+    max_results : budget TOTAL d'événements rendus, tous agendas confondus.
+
+    Chaque événement porte le `calendar_id` d'où il vient : c'est celui-là qu'il
+    faut repasser à `calendar_update`, un identifiant d'événement n'ayant de sens
+    que dans son agenda.
+    """
+    auth = await _authed()
+    if isinstance(auth, dict):
+        return auth
+    _, headers = auth
+    limit = max(1, min(int(max_results), 250))
+    async with _client() as http:
+        ids = _items(calendar_id) or ["primary"]
+        note = None
+        if "*" in ids:
+            cals = await _calendar_ids(http, headers)
+            if isinstance(cals, dict):
+                return cals
+            ids = [c["calendar_id"] for c in cals if c.get("calendar_id")]
+            if len(ids) > MAX_CALENDARS:
+                note = ("%d agendas sur le compte, les %d premiers seulement ont été "
+                        "interrogés — nommer les agendas voulus dans calendar_id pour "
+                        "viser." % (len(ids), MAX_CALENDARS))
+                ids = ids[:MAX_CALENDARS]
+        results = await asyncio.gather(*(
+            _fetch_events(http, headers, cid, time_min, time_max, limit) for cid in ids
+        ))
+    events, errors = [], {}
+    for cal_id, items, err in results:
+        if err:
+            errors[cal_id] = err
+        events.extend(items)
+    # Merge key: the day first, so an all-day event ("2026-08-01") sorts before the
+    # timed ones of the same day whatever their UTC offset.
+    events.sort(key=lambda e: ((e.get("start") or "")[:10], e.get("start") or ""))
+    out: dict = {}
+    if len(events) > limit:
+        # A cut must be visible, measured, and recoverable (cf. mail_thread).
+        out["note"] = ("%d événements trouvés, %d rendus — rappeler avec "
+                       "max_results=<n> pour la suite." % (len(events), limit))
+        events = events[:limit]
+    out["events"] = events
+    if note:
+        out["note"] = note if "note" not in out else out["note"] + " " + note
+    if errors:
+        # Named, never swallowed: one unreadable calendar must not pass for an
+        # empty day on the others.
+        out["agendas_en_erreur"] = errors
+    return out
+
+
+# Invitations. Google decides who gets an EMAIL from `sendUpdates`, and the middle
+# value is the interesting one: an attendee on Google Calendar sees the event
+# appear whatever we ask, while an attendee without one sees strictly nothing
+# unless a mail goes out. Hence the default: mail exactly those who would
+# otherwise be invited to nothing.
+#
+# ⚠️ This is the FIRST outbound channel of the whole addon - which otherwise
+# guarantees "no send" structurally, by having no send tool at all. Here the
+# recipient and the text (summary, description) are both caller-chosen, so an
+# invitation IS an exfiltration path. Nothing in this module can close it: who may
+# be invited is contextual policy, and it belongs to the calling agent's guard
+# (channel, human confirmation, allowlist). Said plainly rather than papered over.
+SEND_UPDATES = {
+    "all": "tous les invités reçoivent un mail",
+    "externalOnly": "seuls les invités hors Google Calendar reçoivent un mail",
+    "none": "aucun mail — l'événement apparaît seulement chez les invités Google",
+}
+DEFAULT_SEND_UPDATES = "externalOnly"
+
+
+def _send_updates(value: str | None) -> str | dict:
+    v = (value or DEFAULT_SEND_UPDATES).strip()
+    match = {k.lower(): k for k in SEND_UPDATES}.get(v.lower())
+    if not match:
+        return {"error": "send_updates « %s » inconnu : %s." % (
+            value, " / ".join("%s (%s)" % (k, d) for k, d in SEND_UPDATES.items()))}
+    return match
 
 
 @mcp.tool()
 async def calendar_create(summary: str, start: str, end: str,
-                          description: str | None = None, location: str | None = None) -> dict:
-    """Crée un événement dans l'agenda principal (sur demande explicite de l'utilisateur).
+                          description: str | None = None, location: str | None = None,
+                          calendar_id: str = "primary", visibility: str | None = None,
+                          attendees: str | None = None,
+                          send_updates: str | None = None) -> dict:
+    """Crée un événement dans un agenda (sur demande explicite de l'utilisateur).
 
     start / end : ISO 8601 (datetime), ou date seule YYYY-MM-DD pour du journée entière.
+    calendar_id : « primary » (défaut), ou un identifiant rendu par `calendar_list`.
+    visibility : « private » pour masquer le détail aux autres lecteurs de l'agenda
+      (ils voient l'occupation, pas le contenu) ; « public », ou « default » qui
+      suit le réglage de l'agenda.
+    attendees : adresses mail des invités, séparées par des virgules.
+    send_updates : qui reçoit un MAIL d'invitation. « externalOnly » (défaut) =
+      seulement les invités hors Google Calendar, qui sans mail ne verraient rien ;
+      « all » = tout le monde, en plus de l'invitation posée dans l'agenda ;
+      « none » = personne. Un invité sur Google Calendar voit l'événement
+      apparaître dans son agenda dans les trois cas.
     """
     auth = await _authed()
     if isinstance(auth, dict):
@@ -762,19 +1030,50 @@ async def calendar_create(summary: str, start: str, end: str,
         event["description"] = description
     if location:
         event["location"] = location
+    vis = _visibility(visibility)
+    if isinstance(vis, dict):
+        return vis
+    if vis:
+        event["visibility"] = vis
+    guests = _guests(attendees)
+    if isinstance(guests, dict):
+        return guests
+    if guests:
+        event["attendees"] = guests
+    notify = _send_updates(send_updates)
+    if isinstance(notify, dict):
+        return notify
     async with _client() as http:
-        r = await http.post(f"{CALENDAR}/calendars/primary/events", json=event, headers=headers)
+        r = await http.post(f"{_cal_path(calendar_id)}/events", json=event,
+                            params={"sendUpdates": notify}, headers=headers)
         data = r.json()
     if r.status_code != 200:
         return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
-    return {"id": data.get("id"), "status": "événement créé", "link": data.get("htmlLink")}
+    out = {"id": data.get("id"), "calendar_id": calendar_id,
+           "status": "événement créé", "link": data.get("htmlLink")}
+    if guests:
+        out["invites"] = "%d invité(s) — %s." % (len(guests), SEND_UPDATES[notify])
+    return out
 
 
 @mcp.tool()
 async def calendar_update(event_id: str, summary: str | None = None, start: str | None = None,
                           end: str | None = None, description: str | None = None,
-                          location: str | None = None) -> dict:
-    """Modifie un événement existant (déplacement, renommage…) — confirmation utilisateur requise en amont."""
+                          location: str | None = None, calendar_id: str = "primary",
+                          visibility: str | None = None, attendees: str | None = None,
+                          send_updates: str | None = None) -> dict:
+    """Modifie un événement existant (déplacement, renommage…) — confirmation utilisateur requise en amont.
+
+    calendar_id : l'agenda où vit l'événement — celui que `calendar_events` a rendu
+      à côté de lui. Un identifiant d'événement n'existe que dans son agenda ;
+      viser le mauvais agenda rend « not found », pas une modification silencieuse.
+    attendees : REMPLACE la liste d'invités, ne s'y ajoute pas — repasser la liste
+      complète. Un invité retiré de la liste est désinvité.
+    send_updates : qui reçoit un mail (cf. `calendar_create`). Sur une modification
+      il prévient AUSSI les invités déjà présents que l'événement a bougé.
+
+    Ne déplace pas un événement d'un agenda à l'autre : aucun outil ne fait ça.
+    """
     auth = await _authed()
     if isinstance(auth, dict):
         return auth
@@ -790,14 +1089,32 @@ async def calendar_update(event_id: str, summary: str | None = None, start: str 
         patch["description"] = description
     if location is not None:
         patch["location"] = location
+    vis = _visibility(visibility)
+    if isinstance(vis, dict):
+        return vis
+    if vis:
+        patch["visibility"] = vis
+    guests = _guests(attendees)
+    if isinstance(guests, dict):
+        return guests
+    if attendees is not None:
+        patch["attendees"] = guests
+    notify = _send_updates(send_updates)
+    if isinstance(notify, dict):
+        return notify
     if not patch:
         return {"error": "rien à modifier : aucun champ fourni."}
     async with _client() as http:
-        r = await http.patch(f"{CALENDAR}/calendars/primary/events/{event_id}", json=patch, headers=headers)
+        r = await http.patch(f"{_cal_path(calendar_id)}/events/{quote(event_id, safe='')}",
+                             json=patch, params={"sendUpdates": notify}, headers=headers)
         data = r.json()
     if r.status_code != 200:
         return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
-    return {"id": data.get("id"), "status": "événement modifié", "link": data.get("htmlLink")}
+    out = {"id": data.get("id"), "calendar_id": calendar_id,
+           "status": "événement modifié", "link": data.get("htmlLink")}
+    if attendees is not None:
+        out["invites"] = "liste d'invités remplacée (%d) — %s." % (len(guests), SEND_UPDATES[notify])
+    return out
 
 
 # --------------------------------------------------------------------------
