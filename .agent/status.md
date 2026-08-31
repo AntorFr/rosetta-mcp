@@ -1,6 +1,35 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-08-25
+> MàJ : 2026-09-01
+
+**`verbatim` — 0.24.0 : ce qui a été DIT, horodaté, sans rien transcrire
+(2026-09-01)**. Nouvel addon, classe machine, sans clé ni enrôlement : il va chercher les
+sous-titres **déjà publiés** (yt-dlp pour la résolution, un GET pour le texte), les recolle
+en phrases et rend chacune avec la seconde où elle commence et le lien qui s'y rend
+(`…&t=252s`). Aucune reconnaissance vocale : pas de GPU, pas d'audio téléchargé, et un média
+sans sous-titres revient **vide en le disant**. Trois outils : `verbatim` (le transcript par
+tranches rattrapables — troncature mesurée, `depuis=<n>` nommé), `verbatim_cherche` (où un
+sujet a été abordé, sans faire passer une heure de parole dans le contexte) et
+`verbatim_fiche` (titre, chaîne, durée, chapitres, langues dispo — zéro ligne de texte).
+
+Né du besoin d'Adestia (plugin `listening-post`, la veille vidéo/audio d'Alfred) : la fiche
+d'une vidéo écrite depuis sa description est une fiche écrite depuis l'argumentaire de son
+auteur. Le pod n'a plus besoin de yt-dlp chez lui, il appelle le hub.
+
+⚠️ Deux comportements amont **vérifiés sur le service vivant le 2026-08-31**, pas lus dans
+une doc : l'URL `vtt` d'une piste **automatique** YouTube rend une **playlist HLS**
+(`#EXTM3U`), pas du VTT — l'addon la suit ; et les cues d'une ASR **défilent** en se
+répétant, si bien qu'une concaténation naïve dit tout deux ou trois fois. D'où l'ordre
+json3 → vtt → srt (json3 marque ses événements de défilement `aAppend`) et le filtre de
+recouvrement pour tout ce qui n'est pas YouTube.
+
+⚠️ `origine` (`manuel` / `auto`) voyage dans **chaque** réponse : citer une ASR au mot près
+comme si l'auteur l'avait écrite est une citation fausse. Et `yt-dlp` est **volontairement
+non épinglé** — une version de quelques mois ne se dégrade pas, elle s'arrête d'un coup :
+reconstruire l'image EST la maintenance.
+
+Reste : déploiement (k8s-home-lab), puis vérifier depuis Alfred que l'addon est bien visible
+côté agent (la skill `veille-json` du plugin nomme les deux chemins, outil local et hub).
 
 **`google` — 0.23.0 : plusieurs agendas, et le choix d'où l'on lit et d'où l'on écrit
 (2026-08-25)**. `calendar_list` rend les agendas du compte avec

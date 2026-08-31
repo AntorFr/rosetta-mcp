@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rosetta-mcp"
-version = "0.23.0"
+version = "0.24.0"
 description = "Rosetta - a modular MCP hub: many thin MCP servers (addons) behind one HTTP endpoint and one OIDC auth"
 readme = "README.md"
 license = "MIT"
@@ -22,6 +22,12 @@ dependencies = [
     # database - a slim base image is not guaranteed to ship one. Carry the
     # fallback rather than depend on the answer.
     "tzdata>=2024.1",
+    # `verbatim` resolves the subtitles a platform publishes. Deliberately NOT
+    # pinned: a yt-dlp a few months old does not degrade, it stops — the site
+    # changes its player and every older version fails on every video at once.
+    # Rebuilding the image IS the maintenance, and a floor is the only bound
+    # that makes sense here.
+    "yt-dlp>=2025.1",
 ]
 
 [project.optional-dependencies]

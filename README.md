@@ -262,6 +262,45 @@ than extrapolated. A place is resolved by name against the 131 known ports
 first, then through the keyless **IGN geocoder** — no third key for a question
 that is already answered by open data.
 
+And `verbatim` (what was actually **said** in a video or an episode, timestamped
+— **no key, no account, no enrolment**: it fetches the subtitles the platform
+already publishes, using yt-dlp to resolve them and a plain GET for the text.
+No speech recognition anywhere, so no GPU, no audio downloaded, and a media
+with no published subtitles comes back **empty saying so** rather than
+approximately transcribed. Three tools: `verbatim` (the transcript in
+sentence-sized lines, each carrying the second it starts at and a link that
+seeks straight there, in recoverable slices), `verbatim_cherche` (where a
+subject was discussed — the answer to "get me the passage about X" without
+pushing an hour of speech through the model) and `verbatim_fiche` (title,
+channel, date, duration, chapters and the available subtitle languages, without
+a line of the text)).
+
+Every answer carries **`origine`**: `manuel` or `auto`. They are not the same
+material — automatic captions are ASR, with unreliable punctuation and mangled
+proper nouns and figures. Summarising one is fine; quoting it word for word as
+if the author had written it is a false quotation, so the field is part of the
+answer rather than a detail. Manual tracks are preferred wherever they exist.
+
+Two upstream behaviours drive the design, measured against the live service on
+2026-08-31 rather than read off the docs:
+
+- On YouTube the `vtt` URL of an **automatic** track serves an **HLS playlist**
+  (`#EXTM3U`), not VTT: what comes back is a table of segment URLs. The addon
+  follows it; without that, "the transcript" is a list of links.
+- Automatic cues **roll** — each repeats the tail of the previous one so the
+  text scrolls on screen — so a naive concatenation says everything two or
+  three times, and every search then hits the same moment three times over.
+
+Hence the format preference **json3 → vtt → srt**: json3 marks its scrolling
+events with `aAppend`, and ignoring those yields the text once. The VTT path
+keeps a suffix-overlap filter for everything that is not YouTube.
+
+⚠️ **yt-dlp ages badly on purpose.** Platforms change their players, and a
+yt-dlp a few months old does not degrade — it stops, on every video at once.
+The dependency is deliberately unpinned and the image is expected to be rebuilt
+rather than frozen; an addon that suddenly reads nothing wants a fresh image
+before it wants a bug report.
+
 Tool descriptions are intentionally in **French**: they are runtime UX for the
 French-speaking agents this hub serves, not documentation.
 
