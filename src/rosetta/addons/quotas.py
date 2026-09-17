@@ -273,7 +273,24 @@ def _enrol_hint(sub: str, provider: str) -> str:
             "(une seule fois).")
 
 
-# Access-token cache: (sub, provider) -> (token, epoch expiry). Not a mere
+def _key(sub: str, provider: str) -> tuple[str, str]:
+    """The cache and lock key for a subject, derived through `_safe()` - the very
+    function that derives the FILE.
+
+    ⚠️ Not a detail, and not cosmetic. One subject reaches this module under two
+    spellings: a human call carries the Authelia username (`Sébastien`), a
+    machine call carries the enrolled FILENAME, which `_safe()` has already
+    folded (`S_bastien`). Both resolve to the same file, because `_safe()` is
+    idempotent - so keying the lock on the raw spelling gives the same
+    credential TWO different locks, and the serialization that exists to stop a
+    rotated refresh token from being burned twice stops serializing exactly
+    where the two kinds of caller meet. Everything that keys on a subject goes
+    through here.
+    """
+    return (_safe(sub), provider)
+
+
+# Access-token cache: (safe sub, provider) -> (token, epoch expiry). Not a mere
 # optimization: a refresh may rotate the stored credential, so refreshing per
 # call would multiply the windows in which a crash loses it.
 _token_cache: dict[tuple[str, str], tuple[str, float]] = {}
@@ -297,7 +314,7 @@ def _lock(key: tuple[str, str]) -> asyncio.Lock:
 
 async def _claude_access_token(sub: str, force: bool = False) -> str | dict:
     """A live Claude access token for `sub`, or an {'error': ...} dict."""
-    key = (sub, "claude")
+    key = _key(sub, "claude")
     if not force:
         cached = _token_cache.get(key)
         if cached and time.time() < cached[1]:
@@ -596,7 +613,7 @@ async def quotas(fournisseur: str = DEFAULT_PROVIDER) -> dict:
     if isinstance(sub, dict):
         return sub
 
-    key = (sub, fournisseur)
+    key = _key(sub, fournisseur)
     cached = _usage_cache.get(key)
     if cached and time.time() - cached[1] < USAGE_TTL:
         return SHAPERS[fournisseur](cached[0])
@@ -631,7 +648,7 @@ async def quotas_fournisseurs() -> dict:
     enrolled = user.get("providers") or {}
     external = os.environ.get("ROSETTA_EXTERNAL_URL", "").rstrip("/")
     return {
-        "utilisateur": sub,
+        "utilisateur": user.get("sub") or sub,
         "fournisseurs": [
             _compact({
                 "nom": name,
@@ -709,10 +726,13 @@ async def enroll(request):
     # than no credential: it turns every later call into a puzzle. This is also
     # where a `setup-token` is caught, with the reason spelled out.
     user = _read_user(sub)
+    # The real spelling, kept because the filename has lost its accents and an
+    # answer that calls the user « S_bastien » is an answer that read a path.
+    user["sub"] = sub
     user.setdefault("providers", {})["claude"] = {
         "refresh_token": token, "enrolled_at": int(time.time()),
     }
-    _token_cache.pop((sub, "claude"), None)
+    _token_cache.pop(_key(sub, "claude"), None)
     previous = _read_user(sub)
     _write_user(sub, user)
 
@@ -720,11 +740,11 @@ async def enroll(request):
     if "error" in probe:
         # Put back exactly what was there, including "nothing".
         _write_user(sub, previous)
-        _token_cache.pop((sub, "claude"), None)
+        _token_cache.pop(_key(sub, "claude"), None)
         return enrol_page("quotas", "⚠️", "Jeton refusé", probe["error"],
                           extra=FORM, status=400)
 
-    _usage_cache[(sub, "claude")] = (probe, time.time())
+    _usage_cache[_key(sub, "claude")] = (probe, time.time())
     rows = _shape_claude(probe).get("compteurs") or []
     summary = ", ".join(f"{r.get('compteur')} {r.get('pourcent')} %" for r in rows[:3])
     return enrol_page("quotas", "✅", "Abonnement Claude enrôlé",

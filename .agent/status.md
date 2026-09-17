@@ -38,8 +38,18 @@ tests épinglent exactement ça — un commentaire ne l'aurait pas tenu. `ROSETT
 dit les compteurs de qui un appel machine lit ; plusieurs enrôlés sans propriétaire désigné
 est une **erreur**, jamais une supposition.
 
-Reste : enrôler en prod (`/quotas/enroll`), câbler le volume `/data/quotas` dans le chart,
-déployer, puis publier la version.
+**0.25.1 — un sujet, deux orthographes (2026-09-17).** Défaut trouvé APRÈS déploiement, en
+regardant le nom du fichier créé par l'enrôlement : `S_bastien.json`. `_safe()` plie l'accent
+pour le nom de fichier, si bien qu'un appel **humain** arrive sous `Sébastien` (Authelia) et
+un appel **machine** sous `S_bastien` (relu du nom de fichier). Les deux ouvrent le même
+fichier — `_safe()` est idempotent — mais tenaient **deux verrous différents**, donc la
+sérialisation qui empêche de brûler deux fois un jeton rotatif cessait de sérialiser
+exactement là où les deux types d'appelants se croisent. Tout ce qui indexe sur un sujet
+passe désormais par `_key()`, dérivée comme le fichier. Test de régression vérifié rouge
+contre la 0.25.0 (`2 == 1` : deux lectures amont au lieu d'une).
+
+Reste : câbler `quotas` dans la config MCP des agents. Alfred ne le voit pas — chaque addon
+rosetta est un serveur MCP déclaré séparément côté agent, donc déployer le hub ne suffit pas.
 
 **Trouvé en chemin :** deux tests de `marees` étaient **rouges sur `main`** — pas cassés,
 **pourris par le calendrier** : la charge mockée est une capture réelle des 7-8 août 2026 et

@@ -387,3 +387,39 @@ def test_a_machine_token_cannot_enrol_or_replace_a_credential(enrolled):
     assert r.status_code == 403
     stored = json.loads((enrolled / "users" / "sebastien.json").read_text())
     assert stored["providers"]["claude"]["refresh_token"] == "rt-1"
+
+
+# -- one subject, two spellings --------------------------------------------
+
+@pytest.fixture
+def enrolled_accented(isolated):
+    """`_safe()` folds the accent for the filename, so one subject reaches the
+    module as « Sébastien » (human, from Authelia) and as « S_bastien »
+    (machine, read back from the filename). Both must be the same subject."""
+    users = isolated / "users"
+    users.mkdir()
+    (users / "S_bastien.json").write_text(json.dumps({
+        "sub": "Sébastien",
+        "providers": {"claude": {"refresh_token": "rt-1", "enrolled_at": 0}},
+    }))
+    return isolated
+
+
+def test_a_human_and_a_machine_share_one_cache_and_one_lock(enrolled_accented):
+    """The serialization that stops a rotated refresh token from being burned
+    twice is keyed on the subject. Two spellings resolving to ONE file must not
+    hold two locks - that is precisely where the two kinds of caller meet."""
+    seen = []
+    quotas._transport = api(seen=seen)
+    current_claims.set({"sub": "Sébastien"})
+    run(quotas.quotas())
+    current_claims.set(MACHINE)
+    run(quotas.quotas())
+    assert sum(1 for r in seen if r.url.path == "/api/oauth/usage") == 1
+    assert len(quotas._usage_cache) == 1, "un seul sujet, un seul cache"
+    assert len(quotas._token_cache) == 1, "un seul sujet, un seul jeton en cache"
+
+
+def test_the_answer_keeps_the_real_spelling_not_the_filename(enrolled_accented):
+    current_claims.set(MACHINE)
+    assert run(quotas.quotas_fournisseurs())["utilisateur"] == "Sébastien"
