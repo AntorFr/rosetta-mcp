@@ -19,6 +19,8 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("ROSETTA_QUOTAS_DATA", str(tmp_path))
     monkeypatch.setenv("ROSETTA_EXTERNAL_URL", "https://rosetta.example.com")
     monkeypatch.setenv("TZ", "Europe/Paris")
+    monkeypatch.delenv("ROSETTA_QUOTAS_OWNER", raising=False)
+    monkeypatch.delenv("ROSETTA_QUOTAS_CLIENTS", raising=False)
     quotas._token_cache.clear()
     quotas._usage_cache.clear()
     quotas._locks.clear()
@@ -89,12 +91,53 @@ def api(usage=None, usage_status=200, refresh=None, refresh_status=200, seen=Non
 
 # -- identity and enrolment ------------------------------------------------
 
-def test_machine_token_is_refused_by_the_tool_too(isolated):
-    current_claims.set({"sub": "oauth2:client:alfred"})
-    # The hub already blocks /quotas for machine subjects; the tool still refuses
-    # to key a personal credential on one rather than trust the layer above.
+MACHINE = {"sub": "oauth2:client:supervision"}
+
+
+def test_a_call_without_any_identity_is_refused(isolated):
     current_claims.set(None)
-    assert "identité utilisateur" in run(quotas.quotas())["error"]
+    assert "identité absente" in run(quotas.quotas())["error"]
+
+
+def test_a_machine_reads_the_only_enrolled_subject(enrolled):
+    """A supervision pod has no human behind it - and when exactly one
+    subscription is enrolled, whose gauges it wants cannot be ambiguous."""
+    current_claims.set(MACHINE)
+    quotas._transport = api()
+    out = run(quotas.quotas())
+    assert out["compteurs"][0]["pourcent"] == 42
+
+
+def test_a_machine_reads_the_designated_owner(enrolled, monkeypatch):
+    (enrolled / "users" / "emilie.json").write_text(json.dumps(
+        {"providers": {"claude": {"refresh_token": "rt-e"}}}))
+    monkeypatch.setenv("ROSETTA_QUOTAS_OWNER", "sebastien")
+    current_claims.set(MACHINE)
+    seen = []
+    quotas._transport = api(seen=seen)
+    run(quotas.quotas())
+    refresh = next(r for r in seen if r.url.path == "/v1/oauth/token")
+    assert json.loads(refresh.content)["refresh_token"] == "rt-1"
+
+
+def test_several_enrolled_and_no_owner_is_an_error_not_a_guess(enrolled):
+    """Serving a household member's personal budget by alphabetical order would
+    be a leak wearing the costume of a default."""
+    (enrolled / "users" / "emilie.json").write_text(json.dumps(
+        {"providers": {"claude": {"refresh_token": "rt-e"}}}))
+    current_claims.set(MACHINE)
+    out = run(quotas.quotas())
+    assert "ROSETTA_QUOTAS_OWNER" in out["error"]
+    assert "compteurs" not in out
+
+
+def test_the_client_allowlist_narrows_when_it_is_set(enrolled, monkeypatch):
+    monkeypatch.setenv("ROSETTA_QUOTAS_CLIENTS", "alfred,nestor")
+    current_claims.set(MACHINE)
+    assert "ROSETTA_QUOTAS_CLIENTS" in run(quotas.quotas())["error"]
+    current_claims.set({"sub": "oauth2:client:alfred"})
+    quotas._transport = api()
+    assert run(quotas.quotas())["compteurs"]
 
 
 def test_unenrolled_user_gets_an_actionable_error(isolated):
@@ -290,5 +333,57 @@ def test_a_refused_credential_does_not_erase_the_working_one(enrolled):
     quotas._transport = api(usage_status=403, usage={})
     _enrol_client().post("/quotas/enroll", headers=SSO,
                          data={"refresh_token": "un-mauvais"})
+    stored = json.loads((enrolled / "users" / "sebastien.json").read_text())
+    assert stored["providers"]["claude"]["refresh_token"] == "rt-1"
+
+
+# -- what a stolen machine token buys ---------------------------------------
+#
+# The point of opening the tools to machine identities: a supervision pod has no
+# human behind it. The bound on that opening is that a reading is ALL a machine
+# token can obtain here. These three tests are that bound, written down.
+
+def test_the_addon_never_calls_anything_but_the_two_read_endpoints(enrolled):
+    """The guarantee is the surface: no tool here sends a prompt, so a stolen
+    machine token cannot turn this addon into a way to drive Claude - nor to
+    spend a single token of the subscription it reports on."""
+    current_claims.set(MACHINE)
+    seen = []
+    quotas._transport = api(seen=seen)
+    run(quotas.quotas())
+    quotas._usage_cache.clear()
+    run(quotas.quotas(fournisseur="claude"))
+    run(quotas.quotas_fournisseurs())
+    run(quotas.quotas(fournisseur="openai"))
+    paths = {r.url.path for r in seen}
+    assert paths == {"/v1/oauth/token", "/api/oauth/usage"}
+    assert "/v1/messages" not in paths
+
+
+def test_no_answer_ever_carries_the_credential(enrolled):
+    """It is a FULL account credential. An agent holding it would no longer be
+    bounded by the tool surface at all - so it must not appear in an answer,
+    including in the answers that report a failure."""
+    current_claims.set(MACHINE)
+    answers = []
+    quotas._transport = api(refresh={"access_token": "at-secret", "expires_in": 3600,
+                                     "refresh_token": "rt-rotated"})
+    answers.append(run(quotas.quotas()))
+    answers.append(run(quotas.quotas_fournisseurs()))
+    quotas._usage_cache.clear()
+    quotas._token_cache.clear()
+    quotas._transport = api(refresh={"error": "invalid_grant"}, refresh_status=400)
+    answers.append(run(quotas.quotas()))          # le chemin d'erreur aussi
+    rendered = json.dumps(answers, ensure_ascii=False)
+    for secret in ("rt-1", "rt-rotated", "at-secret"):
+        assert secret not in rendered
+
+
+def test_a_machine_token_cannot_enrol_or_replace_a_credential(enrolled):
+    """Enrolment is not behind the hub JWT at all - it is behind the ingress
+    SSO. So opening the TOOLS to machine identities does not open this."""
+    current_claims.set(MACHINE)
+    r = _enrol_client().post("/quotas/enroll", data={"refresh_token": "le-mien"})
+    assert r.status_code == 403
     stored = json.loads((enrolled / "users" / "sebastien.json").read_text())
     assert stored["providers"]["claude"]["refresh_token"] == "rt-1"

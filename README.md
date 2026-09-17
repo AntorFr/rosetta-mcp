@@ -347,6 +347,30 @@ revoke the first.
 The `User-Agent` matters too: without a `claude-code/<version>` agent the request
 lands in an anonymous, permanently rate-limited bucket even with a valid token.
 
+**Reading is open to machine tokens; enrolling is not.** A supervision pod
+watching the gauges has no human behind it, so `quotas` is not `identity =
+"user"` - but the two halves sit behind different layers, which is what makes
+the split safe. The tools are reached with the hub's JWT and accept a machine
+subject; `/quotas/enroll` is exempt from that JWT (`open_paths`) and guarded by
+the ingress SSO, refusing anything without a `Remote-User` header. No bearer
+token, machine or not, can enrol or replace a credential.
+
+What a stolen machine token buys is therefore **a reading, and only a reading**.
+The addon exposes no tool that sends a prompt, and its whole outbound surface is
+one GET on the usage endpoint plus the refresh that precedes it - `/v1/messages`
+is never called from here, so this path cannot spend a token of the very
+subscription it reports on. The stored credential is a *full account*
+credential, so it is never returned, logged, or rendered into an answer or an
+error. Three tests pin exactly that: the set of endpoints the addon may call,
+the absence of the credential from every answer including the failures, and the
+403 a machine identity earns on enrolment.
+
+Whose gauges a machine call reads is `ROSETTA_QUOTAS_OWNER`, or the single
+enrolled subject when there is exactly one. Several enrolled and no owner set is
+an **error naming the variable**, never a guess - serving a household member's
+personal budget by alphabetical order would be a leak wearing the costume of a
+default.
+
 ### The `git` addon — a smart-HTTP proxy, not a tool surface
 
 `repo_commit` publishes file **contents**, passed inline in the tool call: an
@@ -469,6 +493,8 @@ answers with a 307 redirect.
 | `WITHINGS_CLIENT_ID`, `WITHINGS_CLIENT_SECRET` | - | `withings` addon: the OAuth app registered on the Withings developer dashboard |
 | `ROSETTA_WITHINGS_DATA` | `/data/withings` | `withings` addon: per-user credential store (volume) |
 | `ROSETTA_QUOTAS_DATA` | `/data/quotas` | `quotas` addon: per-user credential store (volume) |
+| `ROSETTA_QUOTAS_OWNER` | *(inferred)* | `quotas` addon: whose gauges a **machine** token reads. Inferred when exactly one subject is enrolled; **required** beyond that, where a guess would serve someone else's personal budget |
+| `ROSETTA_QUOTAS_CLIENTS` | *(empty)* | `quotas` addon: comma-separated machine subjects allowed to read. Empty = every machine identity the hub already authenticated |
 | `ROSETTA_CLAUDE_UA` | `claude-code/<version>` | `quotas` addon: the User-Agent sent to Anthropic's usage endpoint. Not cosmetic — an unrecognised agent is rate-limited into a permanent 429. Overridable so a newer Claude Code can be tracked without a release here |
 | `OFF_USER_AGENT` | `Alfred/1.0 (contact@antor.fr)` | `food` addon: Open Food Facts requires a custom User-Agent naming the app, or treats the caller as a bot |
 | `BROUTER_URL` | `https://brouter.de/brouter` | `trace` addon: routing engine. The public instance is a courtesy service with no SLA; self-hosting (`abrensch/brouter` + the `segments4` tiles for the area) is a URL change, never a rewrite — which is why it is read per call |

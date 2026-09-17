@@ -5,10 +5,28 @@ here spends, buys or changes anything):
   - quotas               : les compteurs d'un abonnement (fenêtres, plafonds, crédits)
   - quotas_fournisseurs  : quels fournisseurs cet addon sait lire, et lesquels sont enrôlés
 
-Identity: `identity = "user"` - the hub refuses machine tokens on /quotas. A
-subscription's remaining budget is personal data, and the credential that reads
-it is a full account credential; both are keyed on the caller's `sub`, stored
-SERVER-SIDE under ROSETTA_QUOTAS_DATA, and never handed to an agent.
+Identity: READING is open to machine tokens (a supervision pod watching the
+gauges has no human behind it), ENROLMENT is not. They are guarded by different
+layers, which is what makes the split safe rather than a hole:
+
+  - the tools are reached with the hub's JWT, and accept a machine subject;
+  - `/quotas/enroll` is exempt from that JWT (`open_paths`) and guarded by the
+    ingress SSO instead - it refuses anything without a `Remote-User` header,
+    so no bearer token, machine or not, can enrol or replace a credential.
+
+WHAT A STOLEN MACHINE TOKEN BUYS, THEREFORE, IS A READING - AND ONLY A READING.
+This addon exposes no tool that sends a prompt, and its entire outbound surface
+to Anthropic is one GET on the usage endpoint plus the token refresh that
+precedes it: `/v1/messages` is never called from here. The stored credential is
+a FULL account credential, so it is never returned, never logged, and never
+rendered into an answer or an error. A test pins all three - the guarantee is
+the tool surface, and a surface is worth pinning.
+
+Whose gauges a machine call reads is `ROSETTA_QUOTAS_OWNER`, or the single
+enrolled subject when there is exactly one. Several enrolled and no owner set
+is an ERROR naming the variable, never a guess: picking a household member's
+personal budget by alphabetical order is not a default, it is a leak.
+`ROSETTA_QUOTAS_CLIENTS` narrows further, to named machine subjects.
 
 Today one provider: **Claude** (claude.ai subscription - Pro, Max, Team,
 Enterprise). The registry below is the extension point; a second provider is a
@@ -81,12 +99,15 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from ..auth import current_claims
+from ..auth import MACHINE_SUB_PREFIX, current_claims
 from ._common import TIMEOUT, enrol_page, new_server, remote_user
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-identity = "user"
+# Deliberately NOT `identity = "user"`: see the identity paragraph above. The
+# hub would then refuse machine tokens on the whole path, enrolment included -
+# and enrolment does not need that refusal (the ingress SSO guards it), while
+# reading must not have it.
 
 # No `required_env`: nothing to provision. The OAuth client is Claude Code's own
 # PUBLIC identifier (it is what the account's own /api/oauth/profile reports as
@@ -166,6 +187,63 @@ def _current_sub() -> str | None:
     # enrolment filed it under.
     value = claims.get("preferred_username") or claims.get("sub")
     return unicodedata.normalize("NFC", str(value)) if value else None
+
+
+def _is_machine() -> bool:
+    claims = current_claims.get() or {}
+    return str(claims.get("sub", "")).startswith(MACHINE_SUB_PREFIX)
+
+
+def _machine_allowed() -> bool:
+    """`ROSETTA_QUOTAS_CLIENTS` = comma-separated machine subjects. Empty (the
+    default) admits every machine identity the hub already authenticated - the
+    narrowing exists for a deployment that wants it, not as a pretence that an
+    allowlist of subjects is a second factor."""
+    allowed = os.environ.get("ROSETTA_QUOTAS_CLIENTS", "").strip()
+    if not allowed:
+        return True
+    claims = current_claims.get() or {}
+    sub = str(claims.get("sub", ""))
+    bare = sub[len(MACHINE_SUB_PREFIX):] if sub.startswith(MACHINE_SUB_PREFIX) else sub
+    return bare in {c.strip() for c in allowed.split(",") if c.strip()}
+
+
+def _enrolled_subjects() -> list[str]:
+    try:
+        names = os.listdir(os.path.join(_data_dir(), "users"))
+    except OSError:
+        return []
+    return sorted(n[:-5] for n in names if n.endswith(".json"))
+
+
+def _target_sub() -> str | dict:
+    """Whose gauges this call reads, or an {'error': ...} dict.
+
+    A human reads their own. A machine reads the deployment's designated owner -
+    explicitly configured, or inferred only when the inference cannot be wrong.
+    """
+    if not _is_machine():
+        sub = _current_sub()
+        return sub or {"error": "identité absente du contexte d'appel."}
+
+    if not _machine_allowed():
+        return {"error": "cette identité machine n'est pas autorisée à lire les "
+                         "compteurs (ROSETTA_QUOTAS_CLIENTS)."}
+
+    owner = (os.environ.get("ROSETTA_QUOTAS_OWNER") or "").strip()
+    if owner:
+        return unicodedata.normalize("NFC", owner)
+
+    enrolled = _enrolled_subjects()
+    if len(enrolled) == 1:
+        return enrolled[0]
+    if not enrolled:
+        external = os.environ.get("ROSETTA_EXTERNAL_URL", "").rstrip("/")
+        return {"error": "aucun abonnement enrôlé sur ce hub : ouvrir "
+                         f"{external}/quotas/enroll dans un navigateur."}
+    return {"error": "plusieurs abonnements sont enrôlés et aucun propriétaire n'est "
+                     "désigné : un appel machine ne peut pas deviner lesquels lire. "
+                     "Renseigner ROSETTA_QUOTAS_OWNER."}
 
 
 def _read_user(sub: str) -> dict:
@@ -514,9 +592,9 @@ async def quotas(fournisseur: str = DEFAULT_PROVIDER) -> dict:
         connus = ", ".join(sorted(PROVIDERS))
         return {"error": f"fournisseur « {fournisseur} » inconnu. Connus : {connus}."}
 
-    sub = _current_sub()
-    if not sub:
-        return {"error": "identité utilisateur absente du contexte d'appel (token machine ?)."}
+    sub = _target_sub()
+    if isinstance(sub, dict):
+        return sub
 
     key = (sub, fournisseur)
     cached = _usage_cache.get(key)
@@ -546,9 +624,9 @@ async def quotas_fournisseurs() -> dict:
     Utile avant de conclure « je n'ai pas l'info » : un fournisseur listé mais
     non enrôlé se règle en ouvrant la page d'enrôlement, une fois.
     """
-    sub = _current_sub()
-    if not sub:
-        return {"error": "identité utilisateur absente du contexte d'appel (token machine ?)."}
+    sub = _target_sub()
+    if isinstance(sub, dict):
+        return sub
     user = _read_user(sub)
     enrolled = user.get("providers") or {}
     external = os.environ.get("ROSETTA_EXTERNAL_URL", "").rstrip("/")

@@ -27,6 +27,17 @@ login** porte la portée. L'enrôlement demande donc le jeton de renouvellement 
 frappé dans un `CLAUDE_CONFIG_DIR` jetable — le hub a ainsi **son** credential et ne touche
 jamais à la session du poste. Vérifié aussi : **un second login ne révoque pas le premier**.
 
+**Lecture ouverte aux jetons machine, enrôlement non** (demandé le 2026-09-17) : un pod de
+supervision n'a pas d'humain derrière lui. Les deux moitiés tiennent derrière des couches
+différentes — les outils derrière le JWT du hub, `/quotas/enroll` derrière le SSO de
+l'ingress — donc **aucun jeton porteur, machine ou pas, ne peut enrôler ni remplacer un
+credential**. Ce qu'achète un jeton de pod volé est **une lecture, et rien d'autre** : aucun
+outil n'envoie de prompt, `/v1/messages` n'est jamais appelé d'ici, et le credential (qui est
+un accès *complet* au compte) n'apparaît dans aucune réponse, y compris les erreurs. Trois
+tests épinglent exactement ça — un commentaire ne l'aurait pas tenu. `ROSETTA_QUOTAS_OWNER`
+dit les compteurs de qui un appel machine lit ; plusieurs enrôlés sans propriétaire désigné
+est une **erreur**, jamais une supposition.
+
 Reste : enrôler en prod (`/quotas/enroll`), câbler le volume `/data/quotas` dans le chart,
 déployer, puis publier la version.
 
