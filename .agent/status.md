@@ -1,6 +1,40 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-09-01
+> MàJ : 2026-09-17
+
+**`quotas` — ce qu'il reste de l'abonnement, sans API officielle (2026-09-17)**. Nouvel
+addon, **classe user** : les compteurs d'un abonnement claude.ai — fenêtre de 5 h, plafonds
+hebdo, crédits supplémentaires, et la répartition de la semaine par surface (Claude Code /
+chat / Cowork). Deux outils : `quotas` (l'état) et `quotas_fournisseurs` (qui est enrôlé) —
+le registre `PROVIDERS` est le point d'extension pour un second service, pas un second addon.
+
+⚠️ **Il n'existe aucune API publique pour ça, et ça a été établi, pas supposé.** L'Usage &
+Cost Admin API d'Anthropic est documentée mais ne parle que de la conso facturée d'une **org
+Console**, et se déclare explicitement indisponible aux comptes individuels. L'addon appelle
+donc `GET /api/oauth/usage`, l'endpoint que `/usage` de Claude Code utilise lui-même :
+**non documenté**, il peut bouger sans préavis. D'où deux réflexes dans le code — lire le
+tableau **`limits[]`** auto-descriptif plutôt que les clés de tête (une douzaine de seaux à
+noms de code — `nimbus_quill`, `cinder_cove`, `copper_kite`… — pour des fonctions non
+sorties, toutes nulles), et **dire que le format a changé** au lieu de rendre un objet vide.
+Une lecture limitée par le débit rend les derniers chiffres connus **avec leur âge**.
+
+⚠️ **Le piège qui coûte l'après-midi, mesuré le 2026-09-17 :** un jeton `claude setup-token`
+— le jeton OAuth **officiel, valable un an**, exactement ce vers quoi on tend la main — est
+**refusé** par cet endpoint : `403 oauth_scope_insufficient`, `required_scopes:
+["user:profile"]`, alors que le **même** jeton passe en 200 sur `/v1/messages`. Le « it can
+only make model requests » de la doc est littéral. Seul un credential issu d'un **vrai
+login** porte la portée. L'enrôlement demande donc le jeton de renouvellement d'un login
+frappé dans un `CLAUDE_CONFIG_DIR` jetable — le hub a ainsi **son** credential et ne touche
+jamais à la session du poste. Vérifié aussi : **un second login ne révoque pas le premier**.
+
+Reste : enrôler en prod (`/quotas/enroll`), câbler le volume `/data/quotas` dans le chart,
+déployer, puis publier la version.
+
+**Trouvé en chemin :** deux tests de `marees` étaient **rouges sur `main`** — pas cassés,
+**pourris par le calendrier** : la charge mockée est une capture réelle des 7-8 août 2026 et
+l'addon refuse à raison toute date hors J±30. Corrigé en **gelant l'horloge** au jour de la
+capture plutôt qu'en retouchant la charge, dont l'authenticité fait toute la valeur.
+
 
 **`verbatim` — 0.24.0 : ce qui a été DIT, horodaté, sans rien transcrire
 (2026-09-01)**. Nouvel addon, classe machine, sans clé ni enrôlement : il va chercher les

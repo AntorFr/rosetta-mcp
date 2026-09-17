@@ -12,6 +12,7 @@ agent ──Bearer JWT──►  https://rosetta.example.com/maps/      (Google 
                        https://rosetta.example.com/transit/   (SNCF + IDFM/Navitia)
                        https://rosetta.example.com/trace/     (BRouter + Overpass, walks on OSM)
                        https://rosetta.example.com/marees/    (tide times + coefficient, France)
+                       https://rosetta.example.com/quotas/   (what is left of a Claude subscription)
                        https://rosetta.example.com/<addon>/   (drop a module in, it mounts)
                        https://rosetta.example.com/health     (unauthenticated, per-addon state)
 ```
@@ -304,14 +305,47 @@ before it wants a bug report.
 Tool descriptions are intentionally in **French**: they are runtime UX for the
 French-speaking agents this hub serves, not documentation.
 
-`withings` and `github` are the hub's **single-writer** components: both
+`withings`, `github` and `quotas` are the hub's **single-writer** components: they
 rotate the refresh token on every refresh, invalidating the previous one, so
 the stored credential must have exactly one writer. Refreshes are serialized
 per user and the access token is cached for its full three hours - but running
 two replicas would have them burn each other's token. Keep it at one.
+(`quotas` persists a rotated credential the same way, on the chance that
+Anthropic rotates too - the answer is not documented either way.)
 Withings also answers **HTTP 200 for its failures**: the real outcome is the
 `status` field inside the JSON body, and a measure arrives as a `(value, unit)`
 pair where `unit` is a power of ten (`78192, -3` = 78.192 kg).
+
+### The `quotas` addon — an undocumented endpoint, read honestly
+
+`quotas` answers "how much of the subscription is left": the 5-hour window, the
+weekly caps, the paid-overflow state, and where the week actually went
+(Claude Code vs chat vs Cowork). Two things about it are worth knowing before
+relying on it, and both are measured rather than documented.
+
+**There is no public API for this.** Anthropic's documented Usage & Cost Admin
+API reports a *Console organization's* token spend and states it is unavailable
+for individual accounts; it says nothing about a claude.ai subscription's
+windows. This addon calls `GET /api/oauth/usage`, the endpoint Claude Code's own
+`/usage` uses. It is undocumented and may change or vanish without notice — so
+the addon reads the payload's self-describing `limits[]` array (a bucket added
+upstream shows up on its own) and, when nothing matches, **says the format
+changed** instead of answering an empty object. A rate-limited read returns the
+last known figures carrying their age (`obsolete_depuis`), never a stale number
+passed off as current.
+
+**A `claude setup-token` credential cannot read it.** That officially documented
+one-year OAuth token is the obvious thing to reach for, and it is refused with
+`403 oauth_scope_insufficient` (`required_scopes: ["user:profile"]`) while the
+same token gets a 200 on `/v1/messages` — "it can only make model requests" is
+literal. Enrolment therefore asks for the refresh token of a real login, minted
+in a throwaway `CLAUDE_CONFIG_DIR` so the hub holds a credential of its own and
+never touches the operator's own session; the enrolment page carries the
+command, and probes the credential before storing it. A second login does not
+revoke the first.
+
+The `User-Agent` matters too: without a `claude-code/<version>` agent the request
+lands in an anonymous, permanently rate-limited bucket even with a valid token.
 
 ### The `git` addon — a smart-HTTP proxy, not a tool surface
 
@@ -434,6 +468,8 @@ answers with a 307 redirect.
 | `ROSETTA_GOOGLE_DATA` | `/data/google` | `google` addon: per-user credential store (volume) |
 | `WITHINGS_CLIENT_ID`, `WITHINGS_CLIENT_SECRET` | - | `withings` addon: the OAuth app registered on the Withings developer dashboard |
 | `ROSETTA_WITHINGS_DATA` | `/data/withings` | `withings` addon: per-user credential store (volume) |
+| `ROSETTA_QUOTAS_DATA` | `/data/quotas` | `quotas` addon: per-user credential store (volume) |
+| `ROSETTA_CLAUDE_UA` | `claude-code/<version>` | `quotas` addon: the User-Agent sent to Anthropic's usage endpoint. Not cosmetic — an unrecognised agent is rate-limited into a permanent 429. Overridable so a newer Claude Code can be tracked without a release here |
 | `OFF_USER_AGENT` | `Alfred/1.0 (contact@antor.fr)` | `food` addon: Open Food Facts requires a custom User-Agent naming the app, or treats the caller as a bot |
 | `BROUTER_URL` | `https://brouter.de/brouter` | `trace` addon: routing engine. The public instance is a courtesy service with no SLA; self-hosting (`abrensch/brouter` + the `segments4` tiles for the area) is a URL change, never a rewrite — which is why it is read per call |
 | `OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | `trace` addon: OSM point lookups. The quota is counted per **IP**, i.e. per deployment — one grouped request per call, never a loop |

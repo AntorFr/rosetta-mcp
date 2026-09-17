@@ -51,10 +51,15 @@ def new_server(name: str) -> FastMCP:
 
 
 def enrol_page(service: str, glyph: str, title: str, message: str,
-               status: int = 200) -> HTMLResponse:
+               status: int = 200, extra: str = "") -> HTMLResponse:
     """Minimal self-contained page for a browser-facing enrolment flow. Shared so
     every user-data addon greets the user with the same card, whatever it
-    enrols."""
+    enrols.
+
+    `extra` is raw HTML appended inside the card, for the flows that need the
+    user to DO something on the page rather than be redirected - a form, a
+    command to copy. Callers own its content; nothing here is escaped, so it is
+    for addon-authored markup only, never for anything a request carried in."""
     return HTMLResponse(f"""<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>rosetta — {service}</title><style>
@@ -73,7 +78,7 @@ def enrol_page(service: str, glyph: str, title: str, message: str,
   .card{{background:#232019;box-shadow:0 10px 34px rgba(0,0,0,.55)}}}}
 </style></head><body><div class="card">
 <div class="glyph">{glyph}</div><h1>Rosetta · {service}</h1>
-<h2>{title}</h2><p>{message}</p>
+<h2>{title}</h2><p>{message}</p>{extra}
 </div></body></html>""", status_code=status)
 
 
