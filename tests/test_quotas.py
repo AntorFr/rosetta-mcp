@@ -232,3 +232,63 @@ def test_a_too_old_reading_is_not_resurrected(enrolled):
     quotas._transport = api(usage_status=429, usage={"error": {}})
     out = run(quotas.quotas())
     assert "compteurs" not in out and "error" in out
+
+
+# -- enrolment -------------------------------------------------------------
+#
+# The riskiest path of the addon: it writes a credential, and it is the one
+# place where a `setup-token` gets caught. The probe-then-keep order and its
+# rollback are what keep a refused credential from poisoning every later call.
+
+def _enrol_client():
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+    from starlette.testclient import TestClient
+    app = Starlette(routes=[Route("/quotas/enroll", quotas.enroll,
+                                  methods=["GET", "POST"])])
+    return TestClient(app)
+
+
+SSO = {"Remote-User": "sebastien"}
+
+
+def test_enrolment_page_refuses_an_unidentified_browser(isolated):
+    r = _enrol_client().get("/quotas/enroll")
+    assert r.status_code == 403 and "authentification" in r.text
+
+
+def test_enrolment_page_carries_the_way_to_get_the_token(isolated):
+    r = _enrol_client().get("/quotas/enroll", headers=SSO)
+    assert r.status_code == 200
+    # The page must name the trap, or the reader mints a setup-token and loses
+    # an afternoon to a 403 whose cause is nowhere written down.
+    assert "setup-token" in r.text and "CLAUDE_CONFIG_DIR" in r.text
+
+
+def test_a_working_credential_is_probed_then_kept(isolated):
+    quotas._transport = api()
+    r = _enrol_client().post("/quotas/enroll", headers=SSO,
+                             data={"refresh_token": "rt-1"})
+    assert r.status_code == 200 and "enrôlé" in r.text
+    stored = json.loads((isolated / "users" / "sebastien.json").read_text())
+    assert stored["providers"]["claude"]["refresh_token"] == "rt-1"
+
+
+def test_a_refused_credential_is_not_kept(isolated):
+    """A stored credential that cannot read turns every later call into a
+    puzzle - so a failed probe must leave the store exactly as it was."""
+    quotas._transport = api(usage_status=403, usage={})
+    r = _enrol_client().post("/quotas/enroll", headers=SSO,
+                             data={"refresh_token": "un-setup-token"})
+    assert r.status_code == 400
+    assert "user:profile" in r.text and "setup-token" in r.text
+    stored = json.loads((isolated / "users" / "sebastien.json").read_text())
+    assert "claude" not in (stored.get("providers") or {})
+
+
+def test_a_refused_credential_does_not_erase_the_working_one(enrolled):
+    quotas._transport = api(usage_status=403, usage={})
+    _enrol_client().post("/quotas/enroll", headers=SSO,
+                         data={"refresh_token": "un-mauvais"})
+    stored = json.loads((enrolled / "users" / "sebastien.json").read_text())
+    assert stored["providers"]["claude"]["refresh_token"] == "rt-1"
