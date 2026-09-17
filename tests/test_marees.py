@@ -34,6 +34,27 @@ def clean(monkeypatch):
     marees._sites_cache = None
 
 
+class _JourDeLaCapture(date):
+    """`date` dont `today()` est gelé au jour de la capture."""
+    @classmethod
+    def today(cls):
+        return date(2026, 8, 7)
+
+
+@pytest.fixture
+def le_jour_de_la_capture(monkeypatch):
+    """Gèle l'horloge de l'addon au 7 août 2026.
+
+    La charge mockée est une capture RÉELLE de ce jour-là, et l'addon refuse —
+    correctement — toute date hors de la fenêtre J±30 du modèle amont. Les deux
+    tests qui épinglent les dates de la capture verdissaient donc à l'écriture
+    puis POURRISSAIENT au calendrier : constatés rouges le 2026-09-17, 41 jours
+    après. Geler le jour plutôt que retoucher les dates de la charge, parce que
+    c'est son authenticité qui fait la valeur de ce fichier (cf. l'en-tête).
+    """
+    monkeypatch.setattr(marees, "date", _JourDeLaCapture)
+
+
 SITES = {"sites": [
     {"site_id": "auray-st-goustan", "site_name": "Auray (St-Goustan)",
      "latitude": 47.6667, "longitude": -2.9833},
@@ -151,7 +172,7 @@ def test_lieu_introuvable():
 
 # --- la lecture des marées -----------------------------------------------
 
-def test_heures_et_coefficient():
+def test_heures_et_coefficient(le_jour_de_la_capture):
     serve(NOMINAL)
     out = run(marees.marees("47.615,-2.918", jour="2026-08-07"))
     jour = out["jours"][0]
@@ -192,7 +213,7 @@ def test_le_coefficient_est_toujours_etiquete_non_officiel():
     assert "Méditerranée" in out["coefficient_note"]
 
 
-def test_plusieurs_jours_sont_groupes():
+def test_plusieurs_jours_sont_groupes(le_jour_de_la_capture):
     serve(NOMINAL)
     out = run(marees.marees("47.615,-2.918", jour="2026-08-07", jours=2))
     assert [j["date"] for j in out["jours"]] == ["2026-08-07", "2026-08-08"]
