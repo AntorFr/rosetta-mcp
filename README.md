@@ -481,9 +481,10 @@ answers with a 307 redirect.
 |---|---|---|
 | `ROSETTA_AUTH` | `oidc` | `off` disables auth (local dev only) |
 | `ROSETTA_ISSUER` | *(required)* | OIDC issuer (token `iss`). No default: one deployment's URL baked into a public image is useless to anyone else. |
-| `ROSETTA_AUDIENCE` | external URL | required token `aud` |
+| `ROSETTA_AUDIENCE` | external URL | accepted token `aud`. A token audienced to this value is accepted on every mount; one audienced to `<audience>/<addon>` is accepted **only on that addon** — which is how a signed authorisation for one addon stops being usable on another. |
 | `ROSETTA_EXTERNAL_URL` | *(required)* | public URL of this hub (RFC 9728 metadata, OAuth callbacks). No default, same reason. |
 | `ROSETTA_JWKS_URI` | `<issuer>/jwks.json` | JWKS endpoint override |
+| `ROSETTA_TRUSTED_ISSUERS` | *(none)* | Extra issuers accepted for VALIDATION only, comma-separated, each `<issuer>` or `<issuer>=<jwks_uri>` (default JWKS `<issuer>/.well-known/jwks.json`). Meant for an authority that mints delegation tokens on a human's behalf: it is not advertised in the RFC 9728 document, because no client can run a flow against it. |
 | `ROSETTA_ADDONS` | all discovered | comma-separated allowlist |
 | `ROSETTA_GIT_REPOS` | *(empty)* | `git` addon: optional `owner/name` allowlist for the smart-HTTP proxy. Empty = every repository the App can reach; the ref rules apply either way |
 | `GOOGLE_MAPS_API_KEY` | - | `maps` addon |

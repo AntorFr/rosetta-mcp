@@ -33,7 +33,10 @@ _EXEMPT_PREFIXES = ("/health", "/.well-known/")
 # only under /git, where the caller is git and never a browser.
 _BASIC_CHALLENGE_PREFIXES = ("/git/",)
 
-_ALGORITHMS = ["RS256", "PS256", "ES256"]
+# EdDSA is here for the delegation tokens Tessera Control mints: it signs with
+# the same Ed25519 key that signs its config bundles, deliberately, so that
+# standing up the hour-H path introduced no new secret anywhere.
+_ALGORITHMS = ["RS256", "PS256", "ES256", "EdDSA"]
 
 # Authelia issues client_credentials tokens with this subject prefix - the
 # discriminant between machine identities and humans.
@@ -94,6 +97,14 @@ class AuthConfig:
     # Extra exempt prefixes (browser-facing addon routes such as enrolment
     # callbacks, guarded upstream by the ingress forwardAuth instead).
     open_prefixes: tuple[str, ...] = ()
+    # (issuer, jwks_uri) pairs this hub accepts tokens from, the IdP first.
+    #
+    # A second issuer is NOT a second authorization server: Tessera Control
+    # mints hour-H delegation tokens, and no client can run a flow against it.
+    # It is therefore trusted for VALIDATION and never advertised in the RFC
+    # 9728 document - pointing a client at a place it cannot get a token is
+    # worse than saying nothing.
+    trusted_issuers: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_env(cls) -> "AuthConfig":
@@ -111,7 +122,54 @@ class AuthConfig:
             external_url=external,
             # Authelia serves its JWKS at /jwks.json; override if the IdP differs.
             jwks_uri=os.environ.get("ROSETTA_JWKS_URI", f"{issuer}/jwks.json"),
+            trusted_issuers=_trusted_issuers(
+                issuer,
+                os.environ.get("ROSETTA_JWKS_URI", f"{issuer}/jwks.json"),
+                os.environ.get("ROSETTA_TRUSTED_ISSUERS", ""),
+            ),
         )
+
+    def audiences_for(self, path: str) -> list[str]:
+        """The `aud` values acceptable on this path.
+
+        TWO, and the pair is the whole point. The hub identifier is accepted
+        everywhere - that is what the IdP issues and what every existing token
+        carries. The MOUNT identifier is accepted only on its own mount.
+
+        So a token that knows which addon it was for is held to it, while one
+        that only knows the hub keeps working exactly as before. Tessera's
+        delegation tokens are of the first kind: the envelope a human signed
+        named one logical server, and this is where that precision stops being
+        thrown away at the door.
+        """
+        auds = [self.audience]
+        addon = path.strip("/").split("/", 1)[0]
+        if addon:
+            auds.append(f"{self.audience}/{addon}")
+        return auds
+
+
+def _trusted_issuers(issuer: str, jwks_uri: str, extra: str) -> tuple[tuple[str, str], ...]:
+    """Parse ROSETTA_TRUSTED_ISSUERS: comma-separated `iss` or `iss=jwks_uri`.
+
+    The default JWKS location differs between the two worlds we actually face
+    - Authelia serves `/jwks.json`, Tessera Control serves the RFC 8414 path -
+    so an entry may name its own, and otherwise `/.well-known/jwks.json` is
+    assumed because that is the standard one.
+    """
+    out: list[tuple[str, str]] = [(issuer, jwks_uri)] if issuer else []
+    seen = {issuer}
+    for item in extra.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        iss, _, uri = item.partition("=")
+        iss = iss.strip().rstrip("/")
+        if not iss or iss in seen:
+            continue
+        seen.add(iss)
+        out.append((iss, uri.strip() or f"{iss}/.well-known/jwks.json"))
+    return tuple(out)
 
 
 class BearerJWTMiddleware:
@@ -120,22 +178,49 @@ class BearerJWTMiddleware:
     def __init__(self, app, config: AuthConfig):
         self.app = app
         self.config = config
-        self._jwks_client: jwt.PyJWKClient | None = None
+        self._jwks_clients: dict[str, jwt.PyJWKClient] = {}
+
+    def _claimed_issuer(self, token: str) -> str:
+        """The `iss` the token CLAIMS, read without verifying anything.
+
+        Reading an unverified claim is safe here and only here: it selects
+        which key set to verify against, and a token naming an issuer we do
+        not trust is refused before any key is fetched. Nothing is believed -
+        the signature check that follows is what decides.
+        """
+        try:
+            claimed = jwt.decode(token, options={"verify_signature": False}).get("iss", "")
+        except Exception:
+            return ""
+        claimed = str(claimed).rstrip("/")
+        for issuer, _ in self.config.trusted_issuers:
+            if issuer == claimed:
+                return issuer
+        return ""
 
     def _signing_key(self, token: str):
-        # Lazy: the JWKS is only fetched on the first authenticated request,
-        # so the hub boots (and /health answers) even if the IdP is down.
-        if self._jwks_client is None:
-            self._jwks_client = jwt.PyJWKClient(self.config.jwks_uri, cache_keys=True)
-        return self._jwks_client.get_signing_key_from_jwt(token).key
+        # Lazy and PER ISSUER: a key set is only fetched on the first request
+        # that claims that issuer, so the hub boots (and /health answers) even
+        # if an IdP is down - and adding a second trusted issuer costs nothing
+        # until somebody actually presents a token from it.
+        issuer = self._claimed_issuer(token)
+        if not issuer:
+            raise ValueError("token issuer is not trusted by this resource")
+        client = self._jwks_clients.get(issuer)
+        if client is None:
+            uri = next(u for i, u in self.config.trusted_issuers if i == issuer)
+            client = jwt.PyJWKClient(uri, cache_keys=True)
+            self._jwks_clients[issuer] = client
+        return client.get_signing_key_from_jwt(token).key
 
-    def _decode(self, token: str) -> dict:
+    def _decode(self, token: str, audiences: list[str] | None = None) -> dict:
+        issuer = self._claimed_issuer(token) or self.config.issuer
         return jwt.decode(
             token,
             self._signing_key(token),
             algorithms=_ALGORITHMS,
-            audience=self.config.audience,
-            issuer=self.config.issuer,
+            audience=audiences if audiences is not None else self.config.audience,
+            issuer=issuer,
             options={"require": ["exp", "iat"]},
         )
 
@@ -161,7 +246,7 @@ class BearerJWTMiddleware:
             error = "missing bearer token"
         else:
             try:
-                claims = self._decode(token)
+                claims = self._decode(token, self.config.audiences_for(path))
             except Exception as exc:  # signature, issuer, audience, expiry...
                 error = f"invalid token: {type(exc).__name__}"
             else:
