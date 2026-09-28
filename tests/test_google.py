@@ -297,6 +297,70 @@ def test_store_keyed_on_preferred_username(enrolled, monkeypatch):
     assert "error" not in out  # resolved the sebastien.json credential
 
 
+# Identity bridge: a Tessera delegation token carries ONLY the opaque `sub`
+# (no preferred_username claim), yet must find the username-keyed credential.
+
+UUID = "05b620f7-ae4c-4107-b862-e93b64436162"
+UUID2 = "11111111-2222-4333-8444-555555555555"
+
+
+def _gmail_ok(request):
+    if request.url.host == "oauth2.googleapis.com":
+        return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+    return httpx.Response(200, json={"messages": []})
+
+
+def test_bridge_learned_from_dual_claim_token_resolves_sub_only(enrolled, monkeypatch):
+    """The first free-regime call (username AND sub in one verified token)
+    teaches the bridge; a sub-only token then resolves the same credential."""
+    monkeypatch.setattr(google, "_transport", mock(_gmail_ok))
+    current_claims.set({"sub": UUID, "preferred_username": "sebastien"})
+    assert "error" not in run(google.mail_search("x"))
+
+    google._token_cache.clear()
+    current_claims.set({"sub": UUID})  # hour H: delegation token, sub only
+    assert "error" not in run(google.mail_search("x"))
+
+
+def test_sub_only_without_bridge_stays_an_actionable_error(data_dir):
+    """Never seen in a dual-claim token, no file under the sub: no guessing -
+    the caller gets the enrolment pointer, named after the sub it presented."""
+    google._token_cache.clear()
+    current_claims.set({"sub": UUID})
+    out = run(google.mail_search("x"))
+    assert "enroll" in out["error"]
+
+
+def test_credential_filed_under_the_sub_itself(data_dir, monkeypatch):
+    """Resolution order: a credential filed under the subject is found before
+    the bridge is consulted (a file dropped under the UUID is a valid entry)."""
+    users = data_dir / "users"
+    users.mkdir()
+    (users / f"{UUID}.json").write_text(json.dumps(
+        {"sub": UUID, "refresh_token": "rt-9", "scopes": [], "enrolled_at": 0}))
+    google._token_cache.clear()
+    current_claims.set({"sub": UUID})
+    monkeypatch.setattr(google, "_transport", mock(_gmail_ok))
+    assert "error" not in run(google.mail_search("x"))
+
+
+def test_authelia_storage_reset_relearns_the_bridge(enrolled, monkeypatch):
+    """An Authelia storage reset mints NEW opaque identifiers: the next
+    dual-claim call carries the new sub next to the same username and the
+    bridge relearns itself - no migration, no operator gesture."""
+    monkeypatch.setattr(google, "_transport", mock(_gmail_ok))
+    current_claims.set({"sub": UUID, "preferred_username": "sebastien"})
+    run(google.mail_search("x"))
+
+    google._token_cache.clear()
+    current_claims.set({"sub": UUID2, "preferred_username": "sebastien"})
+    run(google.mail_search("x"))
+
+    google._token_cache.clear()
+    current_claims.set({"sub": UUID2})  # hour H, post-reset
+    assert "error" not in run(google.mail_search("x"))
+
+
 def test_tool_surface_is_pinned():
     """The surface is a contract. Until 0.26 the pin guaranteed no send and no
     delete tool ever slipped in; 0.27.0 added exactly two, deliberately -

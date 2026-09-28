@@ -51,10 +51,16 @@ local debugging (`python -m rosetta.addons.maps`).
 An addon may declare `identity = "user"`: the hub then refuses machine tokens
 on its path (403) - the bearer token must carry a **human** subject. Tools read
 the caller's claims via a context variable, so a user-data addon keys its
-server-side credential store on `sub`: agents never hold the downstream
-credentials, only their own identity token. Such addons may also register plain
-HTTP routes (`extra_routes` / `open_paths`) for browser-facing enrolment flows,
-guarded by the ingress SSO (forwardAuth) instead of the hub JWT.
+server-side credential store on the caller's identity: agents never hold the
+downstream credentials, only their own identity token. The store key is the
+**username** (`preferred_username`), because that is all the enrolment flow
+ever sees; a verified token carrying both the username and the IdP's opaque
+`sub` teaches a per-addon **identity bridge**, so a delegation token that only
+carries the subject still resolves the same credential - learned lazily, and
+relearned by itself after an IdP storage reset mints new identifiers. Such
+addons may also register plain HTTP routes (`extra_routes` / `open_paths`) for
+browser-facing enrolment flows, guarded by the ingress SSO (forwardAuth)
+instead of the hub JWT.
 
 Bundled addons: `maps` (Google Routes / Places New / Weather - needs
 `GOOGLE_MAPS_API_KEY`; the three weather tools - current, daily and

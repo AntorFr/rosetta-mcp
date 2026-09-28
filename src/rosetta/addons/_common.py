@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import unicodedata
 
 from mcp.server.fastmcp import FastMCP
@@ -35,6 +37,67 @@ def remote_user(request) -> str | None:
         pass
     # NFC: the same name typed on two keyboards must yield the same key.
     return unicodedata.normalize("NFC", value)
+
+
+# --------------------------------------------------------------------------
+# Identity bridge: opaque IdP subject -> the username the store is keyed on
+# --------------------------------------------------------------------------
+#
+# A user-data store is keyed on the USERNAME, because that is all enrolment
+# ever sees (the ingress forwardAuth hands the hub `Remote-User`, never the
+# IdP's opaque `sub`). But a delegation token minted for the hour-H path
+# carries ONLY the opaque subject - no `preferred_username` claim at all - so
+# it needs a way back to the username the credential was filed under.
+#
+# The one place both identities co-occur UNDER A SIGNATURE is a verified
+# free-regime token carrying `preferred_username` AND `sub`: the bridge is
+# learned there, lazily, on ordinary authenticated calls. That is also what
+# makes it self-repairing: an Authelia storage reset mints NEW opaque
+# identifiers, and the next call carries the new `sub` next to the same
+# username - the pair relearns itself, no migration, no operator gesture.
+
+
+def _bridge_path(data_dir: str) -> str:
+    return os.path.join(data_dir, "identity_bridge.json")
+
+
+def _bridge_load(data_dir: str) -> dict:
+    # Tolerant on purpose: a missing or mangled file is an EMPTY bridge that
+    # the next dual-claim call rebuilds - never an outage.
+    try:
+        with open(_bridge_path(data_dir)) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def bridge_learn(data_dir: str, sub: str, username: str) -> None:
+    """Record that opaque subject `sub` is the user filed under `username`.
+
+    Call it ONLY with the two claims of one same verified token - that
+    signature is what attests the equivalence. Last write wins, deliberately:
+    after an IdP storage reset the fresh `sub` must displace nothing but its
+    own absence, and a stale entry is harmless (it still names the same user).
+    The bridge holds usernames, not credentials - it is not a secret.
+    """
+    if not sub or not username or sub == username:
+        return
+    bridge = _bridge_load(data_dir)
+    if bridge.get(sub) == username:
+        return
+    bridge[sub] = username
+    os.makedirs(data_dir, exist_ok=True)
+    path = _bridge_path(data_dir)
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(bridge, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)  # atomic: a reader sees old or new, never half
+
+
+def bridge_resolve(data_dir: str, sub: str) -> str | None:
+    """The username `sub` was last seen next to, or None if never seen."""
+    return _bridge_load(data_dir).get(sub)
 
 
 def new_server(name: str) -> FastMCP:

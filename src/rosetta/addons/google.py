@@ -32,7 +32,11 @@ every call carries a human `sub` (Authelia). Google credentials are stored
 SERVER-SIDE, one file per subject under ROSETTA_GOOGLE_DATA; agents never see
 them. Enrolment is a one-time browser flow (/google/enroll -> Google consent ->
 /google/callback), guarded by the ingress forwardAuth (Remote-User header),
-which yields the per-user Google refresh token.
+which yields the per-user Google refresh token. The store is keyed on the
+username (all forwardAuth carries); a verified token bearing BOTH
+`preferred_username` and the opaque `sub` teaches the identity bridge
+(`_common`), so a delegation token that only knows the subject - Tessera's
+hour-H envelope - still resolves the same credential, with no re-enrolment.
 
 Tool descriptions are in French - runtime UX for the household agents.
 """
@@ -55,7 +59,8 @@ import httpx
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from ..auth import current_claims
-from ._common import TIMEOUT, dig, enrol_page, new_server, remote_user
+from ._common import (TIMEOUT, bridge_learn, bridge_resolve, dig, enrol_page,
+                      new_server, remote_user)
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -132,12 +137,28 @@ def _current_sub() -> str | None:
     claims = current_claims.get()
     if not claims:
         return None
-    # Authelia access tokens may carry an opaque `sub`; the credential store is
-    # keyed on the username - `preferred_username` when the profile scope was
-    # granted (same value as the Remote-User header used at enrolment). NFC to
-    # match the enrolment normalization.
-    value = claims.get("preferred_username") or claims.get("sub")
-    return unicodedata.normalize("NFC", str(value)) if value else None
+    # The credential store is keyed on the username - `preferred_username`,
+    # the same value as the Remote-User header used at enrolment - because
+    # that is all enrolment ever learns. NFC to match its normalization.
+    sub = str(claims.get("sub") or "")
+    username = claims.get("preferred_username")
+    if username:
+        username = unicodedata.normalize("NFC", str(username))
+        # This verified token attests both identities at once: teach the
+        # bridge, so a delegation token (Tessera, hour H) that only carries
+        # the opaque subject still resolves the same credential below.
+        bridge_learn(_data_dir(), sub, username)
+        return username
+    if not sub:
+        return None
+    # No username claim (delegation token, or a client without the profile
+    # scope): the credential may be filed under the subject itself, else the
+    # bridge knows which username it was last seen next to. The bare sub is
+    # the last resort, so the "not enrolled" error still names the caller.
+    sub = unicodedata.normalize("NFC", sub)
+    if os.path.exists(_user_file(sub)):
+        return sub
+    return bridge_resolve(_data_dir(), sub) or sub
 
 
 # Access-token cache: sub -> (token, epoch expiry)

@@ -2,6 +2,32 @@
 
 > MàJ : 2026-09-28
 
+**`google` — 0.28.0 : le pont d'identité sub↔username (2026-09-28, ÉCRIT, PAS DÉPLOYÉ)**.
+Un jeton de délégation Tessera (heure H) ne porte QUE le `sub` opaque — pas de
+`preferred_username` — alors que le store est clé sur le username, la seule chose que
+l'enrôlement (forwardAuth, `Remote-User`) connaisse. Le pont apprend l'équivalence là où
+elle est signée : tout appel libre vérifié portant LES DEUX claims écrit
+`identity_bridge.json` (mécanique dans `_common`, câblée sur `google` seul pour ce lot —
+`courrier` un jour). Résolution : username, sinon fichier rangé sous le sub lui-même,
+sinon pont — le sub nu en dernier recours, pour que l'erreur « pas enrôlé » nomme
+l'appelant. **Auto-réparant** : un reset du storage Authelia frappe de nouveaux UUID, le
+prochain appel double-claim réapprend la paire tout seul. 4 tests neufs (**337 au
+vert**), README corrigé au passage (il disait « keyed on `sub` » — faux depuis toujours,
+la clé réelle est le username). La copie manuelle en prod (point 2 de tessera) est
+abandonnée par Monsieur — et la résolution « fichier sous le sub » la tolérerait de
+toute façon.
+
+⚠️ **Point 3 de tessera CLOS par les archives, pas par une sonde neuve** : pendant la
+panne `mail_local` (13→24/08), `google` résolvait par `preferred_username` pendant que
+`courrier` échouait — preuve vécue que ce claim EST dans l'access token de CE
+déploiement (standard, porté par `profile`, accordé). Le régime libre ne boitait donc
+pas : le bug corrigé est « heure H seulement », plus tout client qui n'aurait pas le
+scope `profile`. Prémisse UUID close par Monsieur en prod le 27/09 (table des
+identifiants opaques : une ligne, secteur `""` servi à tous les clients).
+
+Reste : même train de déploiement que la 0.27.0 ci-dessous (Tessera devant le hub,
+puis tag + image + rollout).
+
 **`google` — 0.27.0 : l'envoi et la suppression existent enfin, parce que Tessera arbitre
 (2026-09-28, ÉCRIT, PAS DÉPLOYÉ — 0.26.0 était déjà prise : le tag `v0.26.0` vit sur le
 chantier auth `6c44b13`, posé sans bump de pyproject, image vraisemblablement publiée)**. Deux outils neufs, les deux premiers gestes
