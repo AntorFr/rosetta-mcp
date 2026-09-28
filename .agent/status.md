@@ -1,8 +1,11 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-09-28
+> MàJ : 2026-09-29
 
-**`google` — 0.28.0 : le pont d'identité sub↔username (2026-09-28, ÉCRIT, PAS DÉPLOYÉ)**.
+**`google` — 0.28.0 : le pont d'identité sub↔username (LIVRÉE le 2026-09-29 : merge +
+push, tag `v0.28.0`, image GHCR amd64+arm64 vérifiée, manifeste tantive bumpé
+0.26.0→0.28.0 et poussé — mais rollout NON vérifié : bump poussé HORS LAN, sans VPN,
+cluster injoignable ; ArgoCD auto-sync fait le reste seul)**.
 Un jeton de délégation Tessera (heure H) ne porte QUE le `sub` opaque — pas de
 `preferred_username` — alors que le store est clé sur le username, la seule chose que
 l'enrôlement (forwardAuth, `Remote-User`) connaisse. Le pont apprend l'équivalence là où
@@ -25,12 +28,15 @@ pas : le bug corrigé est « heure H seulement », plus tout client qui n'aurait
 scope `profile`. Prémisse UUID close par Monsieur en prod le 27/09 (table des
 identifiants opaques : une ligne, secteur `""` servi à tous les clients).
 
-Reste : même train de déploiement que la 0.27.0 ci-dessous (Tessera devant le hub,
-puis tag + image + rollout).
+Reste : **vérifier le rollout au prochain accès LAN** (`/health` → 0.28.0, puis un
+appel double-claim sur `/google` pour voir naître `identity_bridge.json`) — et toujours
+le préalable de la 0.27.0 ci-dessous : Tessera devant le hub AVANT de câbler
+`mail_send` / `calendar_delete` côté agents.
 
 **`google` — 0.27.0 : l'envoi et la suppression existent enfin, parce que Tessera arbitre
-(2026-09-28, ÉCRIT, PAS DÉPLOYÉ — 0.26.0 était déjà prise : le tag `v0.26.0` vit sur le
-chantier auth `6c44b13`, posé sans bump de pyproject, image vraisemblablement publiée)**. Deux outils neufs, les deux premiers gestes
+(2026-09-28, livrée dans le train `v0.28.0` du 2026-09-29 — 0.26.0 était déjà prise : le
+tag `v0.26.0` vit sur le chantier auth `6c44b13`, posé sans bump de pyproject, image
+vraisemblablement publiée)**. Deux outils neufs, les deux premiers gestes
 irréversibles de l'addon : **`mail_send`** (un brouillon relu par son `draft_id` — le
 circuit à préférer, la réponse rend le destinataire RELU du brouillon en fichier, pas
 l'écho de ce que l'appelant croit — ou une composition directe / réponse, qui dérive fil,
