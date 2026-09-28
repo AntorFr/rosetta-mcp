@@ -297,15 +297,113 @@ def test_store_keyed_on_preferred_username(enrolled, monkeypatch):
     assert "error" not in out  # resolved the sebastien.json credential
 
 
-def test_no_send_tool_exists():
+def test_tool_surface_is_pinned():
+    """The surface is a contract. Until 0.26 the pin guaranteed no send and no
+    delete tool ever slipped in; 0.27.0 added exactly two, deliberately -
+    mail_send and calendar_delete, their use arbitrated by Tessera in front of
+    the hub - and the pin now guarantees the NEXT addition is just as loud."""
     tool_names = {t.name for t in run(google.mcp.list_tools())}
     assert tool_names == {
         "mail_search", "mail_thread", "mail_attachment",
-        "mail_draft", "mail_drafts", "mail_draft_update",
+        "mail_draft", "mail_drafts", "mail_draft_update", "mail_send",
         "calendar_list", "calendar_events", "calendar_create", "calendar_update",
+        "calendar_delete",
     }
-    # The point of pinning the set: no send, no delete, no label tool ever slips in.
-    assert not any(("send" in n) or ("delete" in n) or ("label" in n) for n in tool_names)
+    # Still absent on purpose: labels, draft deletion, moving events across calendars.
+    assert not any(("label" in n) or ("move" in n) for n in tool_names)
+
+
+# -- mail_send : le seul outil d'envoi, deux modes exclusifs ------------------
+
+def test_mail_send_sends_a_reviewed_draft_as_filed(enrolled, monkeypatch):
+    """The draft-then-send path: what leaves is the draft ON FILE, and the answer
+    reports its recipient and subject read back from Gmail, not echoed from the
+    caller's belief."""
+    sent = []
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if request.url.path.endswith("/drafts/send"):
+            sent.append(json.loads(request.read()))
+            return httpx.Response(200, json={"id": "m-sent", "threadId": "t-sent"})
+        if "/drafts/" in request.url.path:
+            return httpx.Response(200, json={"id": "d1", "message": {
+                "threadId": "t-sent", "payload": {"headers": [
+                    {"name": "To", "value": "x@y.z"},
+                    {"name": "Subject", "value": "Résa"},
+                ]}}})
+        return httpx.Response(404, json={})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_send(draft_id="d1"))
+    assert sent == [{"id": "d1"}]
+    assert out["id"] == "m-sent"
+    assert out["to"] == "x@y.z" and out["subject"] == "Résa"
+    assert "envoyé" in out["status"]
+
+
+def test_mail_send_unknown_draft_sends_nothing(enrolled, monkeypatch):
+    seen = []
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        seen.append(request.url.path)
+        return httpx.Response(404, json={"error": {"message": "Not Found"}})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_send(draft_id="d-fantome"))
+    assert "error" in out
+    assert not any(p.endswith("/drafts/send") for p in seen)  # the read failed first
+
+
+def test_mail_send_direct_reply_derives_like_a_draft(enrolled, monkeypatch):
+    """One derivation for deposit and send: Reply-To wins over From, the subject
+    gains its « Re: », and the sent message stays attached to its thread."""
+    captured = {}
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        if request.url.path.endswith("/messages/send"):
+            captured.update(json.loads(request.read()))
+            return httpx.Response(200, json={"id": "m-sent", "threadId": "t9"})
+        if "/messages/m9" in request.url.path:
+            return httpx.Response(200, json=_parent_message([
+                ("From", "noreply@plateforme.fr"),
+                ("Reply-To", "humain@x.fr"),
+                ("Subject", "Résa"),
+                ("Message-ID", "<orig@x>"),
+            ]))
+        return httpx.Response(404, json={})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_send(body="Bien reçu.", reply_to_message_id="m9"))
+    assert out["to"] == "humain@x.fr" and out["subject"] == "Re: Résa"
+    assert out["id"] == "m-sent"
+    assert captured["threadId"] == "t9"
+    raw = base64.urlsafe_b64decode(captured["raw"]).decode()
+    assert "In-Reply-To: <orig@x>" in raw
+
+
+def test_mail_send_modes_are_exclusive_and_refused_before_any_call(enrolled, monkeypatch):
+    seen = []
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.mail_send(draft_id="d1", body="X", to="x@y.z"))
+    assert "draft_id" in out["error"]         # a draft is sent as-is, or not at all
+    out = run(google.mail_send())
+    assert "rien à envoyer" in out["error"]
+    out = run(google.mail_send(body="X"))     # no recipient and not a reply
+    assert "destinataire" in out["error"]
+    assert seen == []                         # every refusal fell before Google
 
 
 def test_state_sign_and_verify(data_dir):
@@ -771,3 +869,55 @@ def test_send_updates_is_a_choice_and_a_bad_one_is_refused(enrolled, monkeypatch
     before = len(seen)
     out = run(google.calendar_create("X", "2026-08-01", "2026-08-02", send_updates="parfois"))
     assert "inconnu" in out["error"] and len(seen) == before  # refused before any call
+
+
+# -- calendar_delete : annuler un événement, nettoyer une invitation ----------
+
+def test_calendar_delete_clears_an_event_and_says_so(enrolled, monkeypatch):
+    seen = []
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        seen.append(request)
+        return httpx.Response(204)  # events.delete succeeds with an EMPTY body
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.calendar_delete("ev#1", calendar_id="famille@group.calendar.google.com"))
+    assert seen[-1].method == "DELETE"
+    assert "famille%40group.calendar.google.com" in str(seen[-1].url)
+    assert "ev%231" in str(seen[-1].url)             # the event id is quoted too
+    assert "sendUpdates=externalOnly" in str(seen[-1].url)
+    assert out == {"id": "ev#1", "calendar_id": "famille@group.calendar.google.com",
+                   "status": "événement supprimé"}
+
+
+def test_calendar_delete_already_gone_is_a_state_not_a_failure(enrolled, monkeypatch):
+    """410 = already deleted. A retry after a timeout must read as the state it
+    found, never as a second, botched deletion."""
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        return httpx.Response(410, json={"error": {"message": "Resource has been deleted"}})
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    out = run(google.calendar_delete("ev1"))
+    assert "error" not in out
+    assert "déjà" in out["status"]
+
+
+def test_calendar_delete_mails_who_was_asked_and_refuses_a_bad_choice(enrolled, monkeypatch):
+    seen = []
+
+    def handler(request):
+        if request.url.host == "oauth2.googleapis.com":
+            return httpx.Response(200, json={"access_token": "at-1", "expires_in": 3600})
+        seen.append(request)
+        return httpx.Response(204)
+
+    monkeypatch.setattr(google, "_transport", mock(handler))
+    run(google.calendar_delete("ev1", send_updates="none"))  # vanish silently
+    assert "sendUpdates=none" in str(seen[-1].url)
+    before = len(seen)
+    out = run(google.calendar_delete("ev1", send_updates="parfois"))
+    assert "inconnu" in out["error"] and len(seen) == before

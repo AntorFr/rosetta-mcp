@@ -1,22 +1,31 @@
 """`google` addon - Gmail + Calendar for the household agents, user-data class.
 
-Contract (the guard IS the tool surface - deliberately narrow):
+Contract (the tool surface stays deliberately narrow):
   - mail_search / mail_thread / mail_attachment : read-only Gmail
   - mail_drafts / mail_draft / mail_draft_update : list, read, create and amend
-    DRAFTS - never sends, never deletes: no such tool exists
+    DRAFTS - the review path: none of these makes anything leave the account
+  - mail_send (0.27.0) : the ONE mail-sending tool - a reviewed draft by its
+    id, or a directly composed message or reply
   - calendar_list : the account's calendars, so a caller can CHOOSE where it
     reads and where it writes - every other calendar tool takes a `calendar_id`
     (default "primary"), and every event read carries the calendar it came from
-  - calendar_events / calendar_create / calendar_update : no delete tool exists,
-    and no move-between-calendars tool either
+  - calendar_events / calendar_create / calendar_update / calendar_delete
+    (0.27.0 - cancelling an event, or clearing a received invitation); still
+    no move-between-calendars tool, no labels, no draft deletion
   - attendees ARE writable (0.23.0), and `send_updates` decides who gets an
     invitation MAIL (default: the guests without a Google Calendar, who would
-    otherwise be invited to nothing). This is the addon's ONLY outbound channel -
-    everywhere else "no send" is structural, guaranteed by the absence of a tool.
-    Recipient and text are both caller-chosen, so an invitation is by nature an
-    exfiltration path. Nothing here can close it: WHO may be invited is contextual
-    policy and belongs to the calling agent's guard (channel, human confirmation,
-    allowlist) - the hub knows neither channel nor shield.
+    otherwise be invited to nothing).
+
+Until 0.26 "no send, no delete" was STRUCTURAL - guaranteed by the absence of
+the tool, because the hub had no finer arbiter to offer than its own surface.
+0.27 lifts exactly that premise: Tessera, the policy gateway deployed in front
+of the hub, arbitrates per-tool access, so WHO may send a mail or delete an
+event - on which channel, after which confirmation - is ITS policy plus the
+calling agent's guard, enforced outside this process. What does NOT move:
+recipient and text stay caller-chosen, so mail_send - like an invitation mail -
+is by nature an exfiltration path, said plainly here and closed over there;
+the irreversible tools say what they do in their descriptions; and drafts
+remain the recommended path for anything a human should read first.
 
 Identity: `identity = "user"` - the hub refuses machine tokens on /google, so
 every call carries a human `sub` (Authelia). Google credentials are stored
@@ -62,10 +71,10 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 
 # gmail.compose is the narrowest scope that allows drafts to be created AND
 # amended (drafts.update lives behind the same scope - no re-enrolment was needed
-# to gain the amendment tools). It nominally permits sending and draft deletion
-# too - the guarantee that no mail ever leaves, and that nothing is destroyed, is
-# that NO send and NO delete tool exists in this module, and the credentials never
-# leave the server.
+# to gain the amendment tools). It also covers messages.send and drafts.send,
+# which mail_send exercises since 0.27.0 - again without re-enrolment: the
+# permission was granted all along, unexercised. Draft deletion stays that way
+# (no such tool exists), and the credentials never leave the server.
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.compose",
@@ -520,11 +529,74 @@ async def mail_attachment(message_id: str, attachment_id: str | None = None,
     return out
 
 
+async def _compose(http, headers, body: str, to: str | None, subject: str | None,
+                   thread_id: str | None, reply_to_message_id: str | None
+                   ) -> tuple[dict, str, str] | dict:
+    """(message resource, to, subject) ready for /drafts or /messages/send, or an
+    {'error': ...} dict. ONE derivation shared by mail_draft and mail_send: the
+    reply logic (thread attachment, Reply-To over From, « Re: ») must not fork
+    between depositing a text and sending it - a draft validated by the user and
+    then re-derived differently at send time would betray the review."""
+    message: dict = {}
+    in_reply_to = references = None
+
+    if reply_to_message_id:
+        r = await http.get(
+            f"{GMAIL}/messages/{reply_to_message_id}",
+            params={"format": "metadata", "metadataHeaders":
+                    ["Reply-To", "From", "Subject", "Message-ID", "References"]},
+            headers=headers,
+        )
+        data = r.json()
+        if r.status_code != 200:
+            return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+        parent = data.get("payload") or {}
+        thread_id = thread_id or data.get("threadId")
+        # Reply-To wins over From: a sender posting from a no-reply address uses
+        # it to say where to actually write back. Answering From lands in a void.
+        to = to or _header(parent, "Reply-To") or _header(parent, "From")
+        if subject is None:
+            parent_subject = (_header(parent, "Subject") or "").strip()
+            subject = (parent_subject if parent_subject.lower().startswith("re:")
+                       else f"Re: {parent_subject}".strip())
+        # Chain onto THIS message, and carry its References so the thread holds
+        # in the recipient's client too, not just in our Gmail.
+        in_reply_to = _header(parent, "Message-ID")
+        references = " ".join(x for x in (_header(parent, "References"), in_reply_to) if x)
+
+    if not to:
+        return {"error": "destinataire absent : fournir `to`, ou `reply_to_message_id` "
+                         "pour répondre à un message existant."}
+
+    if thread_id:
+        # Gmail nests a message in a thread ONLY if threadId is set on the
+        # message RESOURCE - headers alone leave it orphaned. Set it
+        # unconditionally; the metadata fetch below only serves the
+        # In-Reply-To/References headers and stays best-effort.
+        message["threadId"] = thread_id
+        if not in_reply_to:
+            # Thread given without a parent message: chain onto its last one.
+            r = await http.get(
+                f"{GMAIL}/threads/{thread_id}",
+                params={"format": "metadata", "metadataHeaders": ["Message-ID"]},
+                headers=headers,
+            )
+            if r.status_code == 200:
+                msgs = r.json().get("messages") or []
+                in_reply_to = _header((msgs[-1].get("payload") or {}),
+                                      "Message-ID") if msgs else None
+    message["raw"] = _build_mime(to, subject or "", body,
+                                 in_reply_to=in_reply_to, references=references)
+    return message, to, subject or ""
+
+
 @mcp.tool()
 async def mail_draft(body: str, to: str | None = None, subject: str | None = None,
                      thread_id: str | None = None,
                      reply_to_message_id: str | None = None) -> dict:
-    """Dépose un BROUILLON dans GMAIL — jamais d'envoi (c'est l'utilisateur qui clique).
+    """Dépose un BROUILLON dans GMAIL — cet outil n'envoie rien : le brouillon
+    attend sa relecture (l'utilisateur l'envoie depuis Gmail, ou via
+    `mail_send(draft_id=…)` après son feu vert explicite).
 
     ⚠️ Dans Gmail, PAS dans la boîte @<domaine familial> (celle-là :
     `courrier_brouillon`). Le brouillon n'apparaîtra que dans le client de
@@ -554,62 +626,18 @@ async def mail_draft(body: str, to: str | None = None, subject: str | None = Non
     if isinstance(auth, dict):
         return auth
     _, headers = auth
-    message: dict = {}
-    in_reply_to = references = None
 
     async with _client() as http:
-        if reply_to_message_id:
-            r = await http.get(
-                f"{GMAIL}/messages/{reply_to_message_id}",
-                params={"format": "metadata", "metadataHeaders":
-                        ["Reply-To", "From", "Subject", "Message-ID", "References"]},
-                headers=headers,
-            )
-            data = r.json()
-            if r.status_code != 200:
-                return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
-            parent = data.get("payload") or {}
-            thread_id = thread_id or data.get("threadId")
-            # Reply-To wins over From: a sender posting from a no-reply address uses
-            # it to say where to actually write back. Answering From lands in a void.
-            to = to or _header(parent, "Reply-To") or _header(parent, "From")
-            if subject is None:
-                parent_subject = (_header(parent, "Subject") or "").strip()
-                subject = (parent_subject if parent_subject.lower().startswith("re:")
-                           else f"Re: {parent_subject}".strip())
-            # Chain onto THIS message, and carry its References so the thread holds
-            # in the recipient's client too, not just in our Gmail.
-            in_reply_to = _header(parent, "Message-ID")
-            references = " ".join(x for x in (_header(parent, "References"), in_reply_to) if x)
-
-        if not to:
-            return {"error": "destinataire absent : fournir `to`, ou `reply_to_message_id` "
-                             "pour répondre à un message existant."}
-
-        if thread_id:
-            # Gmail nests a draft in a thread ONLY if threadId is set on the
-            # draft's message RESOURCE - headers alone leave it orphaned. Set it
-            # unconditionally; the metadata fetch below only serves the
-            # In-Reply-To/References headers and stays best-effort.
-            message["threadId"] = thread_id
-            if not in_reply_to:
-                # Thread given without a parent message: chain onto its last one.
-                r = await http.get(
-                    f"{GMAIL}/threads/{thread_id}",
-                    params={"format": "metadata", "metadataHeaders": ["Message-ID"]},
-                    headers=headers,
-                )
-                if r.status_code == 200:
-                    msgs = r.json().get("messages") or []
-                    in_reply_to = _header((msgs[-1].get("payload") or {}),
-                                          "Message-ID") if msgs else None
-        message["raw"] = _build_mime(to, subject or "", body,
-                                     in_reply_to=in_reply_to, references=references)
+        composed = await _compose(http, headers, body, to, subject,
+                                  thread_id, reply_to_message_id)
+        if isinstance(composed, dict):
+            return composed
+        message, to, subject = composed
         r = await http.post(f"{GMAIL}/drafts", json={"message": message}, headers=headers)
         data = r.json()
     if r.status_code != 200:
         return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
-    return {"draft_id": data.get("id"), "to": to, "subject": subject or "",
+    return {"draft_id": data.get("id"), "to": to, "subject": subject,
             "link": _draft_link(dig(data, "message", "threadId")),
             "status": "brouillon déposé dans Gmail — à relire et envoyer par l'utilisateur"}
 
@@ -663,7 +691,7 @@ async def mail_drafts(draft_id: str | None = None, max_results: int = 10) -> dic
 @mcp.tool()
 async def mail_draft_update(draft_id: str, to: str | None = None, subject: str | None = None,
                             body: str | None = None) -> dict:
-    """Corrige un BROUILLON existant — toujours pas d'envoi, et rien n'est supprimé.
+    """Corrige un BROUILLON existant — cet outil n'envoie rien, et rien n'est supprimé.
 
     Seuls les champs fournis changent : le reste du brouillon (destinataire, objet,
     corps, rattachement au fil) est conservé tel quel. Pour retrouver le `draft_id`
@@ -719,8 +747,76 @@ async def mail_draft_update(draft_id: str, to: str | None = None, subject: str |
             "status": "brouillon corrigé dans Gmail — à relire et envoyer par l'utilisateur"}
 
 
+@mcp.tool()
+async def mail_send(draft_id: str | None = None, body: str | None = None,
+                    to: str | None = None, subject: str | None = None,
+                    thread_id: str | None = None,
+                    reply_to_message_id: str | None = None) -> dict:
+    """ENVOIE un mail via GMAIL — réel, immédiat, irréversible : le destinataire
+    le reçoit. À n'utiliser QUE sur demande explicite de l'utilisateur,
+    destinataire et contenu validés par lui.
+
+    ⚠️ Envoie depuis Gmail, PAS depuis la boîte @<domaine familial> (l'addon
+    `courrier` n'envoie pas : là-bas, brouillon seulement).
+
+    Deux modes EXCLUSIFS :
+    - `draft_id` SEUL : envoie tel quel un brouillon déjà déposé — le circuit à
+      préférer pour tout message qui mérite relecture (`mail_draft` →
+      validation de l'utilisateur → `mail_send(draft_id=…)`). Le brouillon
+      envoyé quitte le dossier Brouillons.
+    - composition directe : `body` + `to`, ou `body` + `reply_to_message_id`
+      pour répondre à un message — le serveur dérive fil, destinataire et objet
+      exactement comme `mail_draft` (Reply-To prime sur From ; un `to` explicite
+      prime sur tout).
+
+    Rend l'`id` du message parti, plus `to` et `subject` RÉELLEMENT utilisés —
+    à vérifier dans la réponse, il est trop tard pour corriger.
+    """
+    if draft_id and (body or to or subject or thread_id or reply_to_message_id):
+        return {"error": "`draft_id` s'utilise seul : un brouillon s'envoie tel quel. "
+                         "Pour le modifier d'abord, passer par mail_draft_update."}
+    if not draft_id and not body:
+        return {"error": "rien à envoyer : fournir `draft_id` (brouillon relu), ou "
+                         "`body` avec `to` / `reply_to_message_id`."}
+    auth = await _authed()
+    if isinstance(auth, dict):
+        return auth
+    _, headers = auth
+
+    async with _client() as http:
+        if draft_id:
+            # Read before sending: the answer must state what ACTUALLY left,
+            # from the draft on file - not echo what the caller believes it says.
+            r = await http.get(f"{GMAIL}/drafts/{draft_id}",
+                               params={"format": "metadata"}, headers=headers)
+            data = r.json()
+            if r.status_code != 200:
+                return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+            info = _draft_summary(data)
+            r = await http.post(f"{GMAIL}/drafts/send", json={"id": draft_id},
+                                headers=headers)
+            data = r.json()
+            if r.status_code != 200:
+                return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+            return {"id": data.get("id"), "thread_id": data.get("threadId"),
+                    "to": info["to"], "subject": info["subject"],
+                    "status": "envoyé — le brouillon est parti tel qu'il était déposé"}
+
+        composed = await _compose(http, headers, body, to, subject,
+                                  thread_id, reply_to_message_id)
+        if isinstance(composed, dict):
+            return composed
+        message, to, subject = composed
+        r = await http.post(f"{GMAIL}/messages/send", json=message, headers=headers)
+        data = r.json()
+    if r.status_code != 200:
+        return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+    return {"id": data.get("id"), "thread_id": data.get("threadId"),
+            "to": to, "subject": subject, "status": "envoyé"}
+
+
 # --------------------------------------------------------------------------
-# Tools - Calendar (lecture + création/modification, pas de suppression)
+# Tools - Calendar (lecture + création/modification/suppression)
 # --------------------------------------------------------------------------
 
 def _when(value: str) -> dict:
@@ -978,12 +1074,13 @@ async def calendar_events(time_min: str, time_max: str, calendar_id: str = "prim
 # unless a mail goes out. Hence the default: mail exactly those who would
 # otherwise be invited to nothing.
 #
-# ⚠️ This is the FIRST outbound channel of the whole addon - which otherwise
-# guarantees "no send" structurally, by having no send tool at all. Here the
-# recipient and the text (summary, description) are both caller-chosen, so an
-# invitation IS an exfiltration path. Nothing in this module can close it: who may
-# be invited is contextual policy, and it belongs to the calling agent's guard
-# (channel, human confirmation, allowlist). Said plainly rather than papered over.
+# ⚠️ This was the addon's ONLY outbound channel until 0.26, when "no send" was
+# structural everywhere else; 0.27 added mail_send, and the same point holds for
+# both: recipient and text (summary, description) are caller-chosen, so an
+# invitation - like a sent mail - IS an exfiltration path. Nothing in this module
+# can close it: who may be invited or written to is contextual policy, and it
+# belongs to Tessera and the calling agent's guard (channel, human confirmation,
+# allowlist). Said plainly rather than papered over.
 SEND_UPDATES = {
     "all": "tous les invités reçoivent un mail",
     "externalOnly": "seuls les invités hors Google Calendar reçoivent un mail",
@@ -1115,6 +1212,51 @@ async def calendar_update(event_id: str, summary: str | None = None, start: str 
     if attendees is not None:
         out["invites"] = "liste d'invités remplacée (%d) — %s." % (len(guests), SEND_UPDATES[notify])
     return out
+
+
+@mcp.tool()
+async def calendar_delete(event_id: str, calendar_id: str = "primary",
+                          send_updates: str | None = None) -> dict:
+    """SUPPRIME un événement d'un agenda — irréversible : confirmation
+    explicite de l'utilisateur requise en amont.
+
+    C'est aussi l'outil qui NETTOIE une invitation reçue : supprimer un
+    événement dont on n'est PAS l'organisateur ne le retire que de cet agenda-ci
+    (et vaut refus auprès de l'organisateur — l'événement survit chez les
+    autres). Supprimer un événement qu'on ORGANISE l'annule pour tous les
+    invités.
+
+    calendar_id : l'agenda où vit l'événement — celui que `calendar_events` a
+      rendu à côté de lui (un id d'événement n'existe que dans son agenda).
+    send_updates : qui reçoit un mail d'annulation (mêmes valeurs que
+      `calendar_create`). Pour faire disparaître une invitation indésirable
+      sans notifier personne : `none`.
+    """
+    auth = await _authed()
+    if isinstance(auth, dict):
+        return auth
+    _, headers = auth
+    notify = _send_updates(send_updates)
+    if isinstance(notify, dict):
+        return notify
+    async with _client() as http:
+        r = await http.delete(
+            f"{_cal_path(calendar_id)}/events/{quote(event_id, safe='')}",
+            params={"sendUpdates": notify}, headers=headers)
+    if r.status_code == 410:
+        # Already gone. Reported as the state found, never as a failure: a retry
+        # after a timeout must not read as a second, botched deletion.
+        return {"id": event_id, "calendar_id": calendar_id,
+                "status": "déjà supprimé ou annulé"}
+    if r.status_code not in (200, 204):
+        # A success is an EMPTY 204 - only the failures carry a JSON body,
+        # and not reliably (a proxy's 502 is HTML).
+        try:
+            detail = dig(r.json(), "error", "message", default=f"HTTP {r.status_code}")
+        except Exception:
+            detail = f"HTTP {r.status_code}"
+        return {"error": detail}
+    return {"id": event_id, "calendar_id": calendar_id, "status": "événement supprimé"}
 
 
 # --------------------------------------------------------------------------

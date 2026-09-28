@@ -1,6 +1,41 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-09-17
+> MàJ : 2026-09-28
+
+**`google` — 0.27.0 : l'envoi et la suppression existent enfin, parce que Tessera arbitre
+(2026-09-28, ÉCRIT, PAS DÉPLOYÉ — 0.26.0 était déjà prise : le tag `v0.26.0` vit sur le
+chantier auth `6c44b13`, posé sans bump de pyproject, image vraisemblablement publiée)**. Deux outils neufs, les deux premiers gestes
+irréversibles de l'addon : **`mail_send`** (un brouillon relu par son `draft_id` — le
+circuit à préférer, la réponse rend le destinataire RELU du brouillon en fichier, pas
+l'écho de ce que l'appelant croit — ou une composition directe / réponse, qui dérive fil,
+destinataire et objet par le MÊME code que `mail_draft`, extrait en `_compose()` : pas de
+fourche entre déposer et envoyer) et **`calendar_delete`** (annule un événement qu'on
+organise, ou NETTOIE une invitation reçue — la supprimer d'un agenda dont on n'est pas
+organisateur ne touche que cet agenda et vaut refus ; `send_updates=none` la fait
+disparaître sans notifier personne ; un 410 « déjà supprimé » est rendu comme un ÉTAT,
+jamais comme un échec — un retry après timeout ne doit pas se lire en seconde suppression
+ratée ; le succès amont est un 204 au corps VIDE, ne pas le parser).
+
+**Le principe qui saute, et pourquoi.** Depuis l'origine « pas d'envoi, pas de
+suppression » était STRUCTUREL — garanti par l'absence d'outil, faute d'arbitre plus fin
+que la surface elle-même. Tessera (passerelle de politique déployée devant le hub)
+arbitre désormais l'accès outil par outil : QUI peut envoyer ou supprimer, sur quel canal,
+après quelle confirmation, c'est SA politique plus la garde de l'agent appelant. Ce qui ne
+bouge pas : destinataire et texte restent choisis par l'appelant (`mail_send` est un chemin
+d'exfiltration, dit tel quel dans le code), le canari de surface épingle la liste EXACTE
+des outils, et le brouillon reste le circuit recommandé pour tout ce qu'un humain doit
+relire.
+
+⚠️ **Aucun ré-enrôlement Google** : `gmail.compose` couvrait déjà `messages.send` /
+`drafts.send` (le constat « nominally permits sending » était posé dans le code depuis des
+mois), et `calendar.events` couvre le delete. La permission dormait ; seul l'outil
+manquait. `courrier` ne bouge PAS (brouillon seulement, réaffirmé dans son en-tête),
+`postier` n'est plus « the ONE sending capability » mais la voie machine. 7 tests neufs,
+canari refait, **333 au vert**.
+
+Reste : **déployer Tessera devant le hub AVANT de câbler ces outils côté agents** — tant
+qu'elle n'y est pas, la seule garde restante est la docstring et la classe user du mount.
+Puis tag + image + rollout du hub, et les gardes côté pods s'il y a lieu.
 
 **`quotas` — ce qu'il reste de l'abonnement, sans API officielle (2026-09-17)**. Nouvel
 addon, **classe user** : les compteurs d'un abonnement claude.ai — fenêtre de 5 h, plafonds

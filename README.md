@@ -67,9 +67,20 @@ one page is enough to answer when the rain starts), `transit` (SNCF + IDFM Navit
 thread, recipient and subject from the parent - `Reply-To` beating `From`) and amend,
 each answering with a stable `link`
 straight to the draft in the Gmail web UI (`ROSETTA_GMAIL_ACCOUNT` overrides the account
-index when the mailbox is not the browser's first) - plus
-Calendar list/read/create/update - deliberately **no send, no delete, no labels**:
-the guard is the tool surface itself. `calendar_list` names the account's
+index when the mailbox is not the browser's first) - plus **`mail_send`**
+(0.27.0), the one sending tool: a reviewed draft by its id - the recommended
+path - or a directly composed message or reply, derived by the same code as a
+draft. Calendar list/read/create/update/**delete** - `calendar_delete` (0.27.0)
+is also how a received invitation is cleared: removing an event one does not
+organise removes it from this calendar only and declines it, while deleting an
+event one organises cancels it for every guest, `send_updates` picking who gets
+the cancellation mail. Still **no labels and no draft deletion**. Until 0.26
+"no send, no delete" was structural - the guard was the tool surface itself,
+the hub having no finer arbiter to offer. 0.27.0 lifts exactly that premise:
+per-tool authorization now lives in **Tessera**, the policy gateway deployed in
+front of the hub, so who may send or delete - on which channel, after which
+confirmation - is its policy plus the calling agent's guard; the hub keeps
+saying plainly what each irreversible tool does. `calendar_list` names the account's
 calendars with the access role on each, so a caller can *choose* where it reads
 and where it writes: every calendar tool takes a `calendar_id` (default
 `primary`, several comma-separated, or `*` for the whole account), and every
@@ -80,12 +91,11 @@ shared calendar) and **attendees**, the single place this addon touches a third
 party. `send_updates` picks who gets an invitation *mail*: the default
 `externalOnly` mails exactly the guests who have no Google Calendar and would
 otherwise be invited to nothing, `all` mails everyone on top of the calendar
-invitation, `none` mails no one. That makes an invitation the addon's **only
-outbound channel** - everywhere else "no send" is structural, guaranteed by the
-absence of a tool - and since recipient and text are both caller-chosen, it is by
-nature an exfiltration path. Nothing here can close it: *who* may be invited is
-contextual policy and belongs to the calling agent's guard (channel, human
-confirmation, allowlist) - the hub knows neither channel nor shield. Listing calendars needs
+invitation, `none` mails no one. An invitation - like a sent mail - is
+caller-addressed, caller-written outbound traffic: an exfiltration path by
+nature. Nothing here can close it: *who* may be invited or written to is
+contextual policy and belongs to Tessera and the calling agent's guard (channel,
+human confirmation, allowlist) - the hub knows neither channel nor shield. Listing calendars needs
 the `calendar.calendarlist.readonly` scope, which `calendar.events` does not
 grant: an enrolment predating 0.23.0 is told to renew rather than handed an
 opaque 403. Attachments come back transcribed to text
@@ -138,8 +148,9 @@ counted per **IP** — i.e. per deployment, shared with every other service
 behind the same egress — and exceeding it earns a ban for all of them),
 `git` (a smart-HTTP proxy rather than a tool surface — see its own section below),
 `courrier` (user-data class: the family's own Zimbra mailboxes over plain IMAP —
-search / read / **drafts only**, the same guard as `google`: no send, no
-delete. A draft reply chains `In-Reply-To`/`References` from the original and
+search / read / **drafts only** — no send, no delete here (the guard `google`
+itself carried until 0.27.0): the human reviews the draft in their client and
+presses the button. A draft reply chains `In-Reply-To`/`References` from the original and
 honours `Reply-To` over `From`, so it lands in the recipient's thread, not
 beside it. Plus **disposable aliases** through the OVH v2 API, self-service
 *bounded by construction*: every tool only lists, creates or deletes aliases
@@ -151,7 +162,8 @@ reads a different mailbox entirely. While both were `mail_*`, told apart only by
 the language of their tool names, agents conflated them — and an outage on one was
 reported as "the mail is down" while the other answered fine. Every tool
 description here names the mailbox it opens), and
-`postier` (the ONE sending capability of the hub, machine class — built for
+`postier` (the hub's **machine-class** sending path — long its only one, until
+`google` gained `mail_send` for human subjects in 0.27.0 — built for
 the household assistant, whom `/courrier` refuses by identity: the sender is
 frozen to `POSTIER_FROM`, recipients must match `POSTIER_ALLOWED` (default:
 the family domain), an hourly sliding-window quota keeps a looping agent

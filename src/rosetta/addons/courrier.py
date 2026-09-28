@@ -11,11 +11,13 @@ subsystem got blamed for it. Hence `courrier_*`, and hence every tool
 description below NAMES its mailbox instead of saying "the caller's box".
 Keep it that way: whatever an agent reads must say WHICH box it opens.
 
-The sovereign twin of `google`: same philosophy (read + **drafts only** -
-deliberately no send, no delete: the human reviews the draft in their client
-and presses the button), but over plain IMAP against the household's Zimbra
-platform, plus the one thing Gmail never had - **disposable aliases** through
-the OVH v2 API (create one per merchant, burn it at the first spam).
+The sovereign twin of `google`: read + **drafts only** - deliberately no send,
+no delete: the human reviews the draft in their client and presses the button.
+(`google` lifted its own version of that guard in 0.27.0, Tessera arbitrating
+its tools from outside the hub; HERE it stays - nothing leaves the household
+boxes through a tool.) Over plain IMAP against the household's Zimbra platform,
+plus the one thing Gmail never had - **disposable aliases** through the OVH v2
+API (create one per merchant, burn it at the first spam).
 
 Identity: `identity = "user"` - the hub refuses machine tokens on /courrier, so
 every call carries a human subject. The mailbox is DERIVED from that identity

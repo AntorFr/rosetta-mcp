@@ -1,7 +1,8 @@
-"""`postier` addon - the ONE sending capability of the hub, machine-callable.
+"""`postier` addon - the MACHINE sending capability of the hub.
 
-Everything else in the mail family is read-or-draft by design; this module is
-the single, deliberately narrow exception, so that Nestor (a machine identity,
+Long the hub's only way to send at all (until 0.27.0, when `google` gained a
+Tessera-arbitrated `mail_send` for HUMAN subjects); `courrier` remains
+read-or-draft by design. This module exists so that Nestor (a machine identity,
 which /courrier refuses) can actually mail the household. The blast radius is
 bounded by construction, not by trust:
 
