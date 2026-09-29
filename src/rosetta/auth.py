@@ -9,11 +9,17 @@ user-delegated access.
 RFC 9728 (protected resource metadata) is served on the well-known paths so
 that OAuth-aware MCP clients can discover the authorization server on their
 own, and every 401 carries the `WWW-Authenticate` header pointing to it.
+
+One deliberate exception: the MCP SURFACE-reading methods (initialize,
+tools/list...) are served without a token on the mount roots, so a catalog
+observer can watch the tool surface without holding a credential - see
+`_serve_anonymous_surface` for the exact edges of that window.
 """
 
 from __future__ import annotations
 
 import base64
+import json
 import os
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -23,6 +29,33 @@ from starlette.responses import JSONResponse
 
 # Paths served without a token: health probes and OAuth discovery documents.
 _EXEMPT_PREFIXES = ("/health", "/.well-known/")
+
+# JSON-RPC methods served WITHOUT a token on the MCP mounts - exactly the
+# surface a catalog observer needs (Tessera Guard polls initialize/tools/list
+# to watch for tool-surface drift; it deliberately holds no hub credential,
+# the delegation token has to travel). Names and schemas of tools become
+# readable without a token: risk accepted and arbitrated (internal network,
+# and the target is that only Guard reaches the hub).
+_ANON_METHODS = frozenset(
+    {"initialize", "notifications/initialized", "ping", "tools/list"})
+
+# An initialize fits in ~2 KiB; a body past this cap is not a handshake, and
+# it is not worth buffering unauthenticated bytes beyond it.
+_ANON_BODY_CAP = 64 * 1024
+
+
+def _is_surface_call(body: bytes) -> bool:
+    """True only for ONE well-formed JSON-RPC object naming a listed method.
+
+    Fail-closed on everything else: unreadable bytes, malformed JSON-RPC, and
+    a BATCH (a list - refused even when every element is whitelisted, so the
+    anonymous window never needs batch semantics)."""
+    try:
+        obj = json.loads(body)
+    except ValueError:
+        return False
+    return (isinstance(obj, dict) and obj.get("jsonrpc") == "2.0"
+            and obj.get("method") in _ANON_METHODS)
 
 # Paths whose 401 must challenge in **Basic**, because their client is git.
 #
@@ -173,7 +206,8 @@ def _trusted_issuers(issuer: str, jwks_uri: str, extra: str) -> tuple[tuple[str,
 
 
 class BearerJWTMiddleware:
-    """Pure ASGI middleware: rejects any non-exempt request without a valid JWT."""
+    """Pure ASGI middleware: rejects any non-exempt request without a valid
+    JWT, save the anonymous surface window (`_serve_anonymous_surface`)."""
 
     def __init__(self, app, config: AuthConfig):
         self.app = app
@@ -243,6 +277,11 @@ class BearerJWTMiddleware:
         error = None
         status = 401
         if not token:
+            # No token AT ALL: maybe the anonymous surface window. A token
+            # that is merely invalid never lands here - a rotten token is
+            # not an anonymous caller, it is refused below like any other.
+            if await self._serve_anonymous_surface(scope, receive, send, path):
+                return
             error = "missing bearer token"
         else:
             try:
@@ -282,6 +321,55 @@ class BearerJWTMiddleware:
             return
 
         await self.app(scope, receive, send)
+
+    async def _serve_anonymous_surface(self, scope, receive, send, path) -> bool:
+        """Forward a token-less SURFACE call (initialize / handshake ping /
+        tools/list) to the app, or return False and let the caller build the
+        401 it was about to send. Exists for the catalog observer of the
+        Tessera Guard gate, which watches the tool surface for drift and
+        deliberately holds no credential of its own.
+
+        The window is deliberately narrow, fail-closed on every edge:
+          - POST only - the GET side (the streamable-HTTP SSE stream) stays
+            authenticated exactly as before;
+          - mount roots only ("/<addon>/", one path segment): the one shape
+            an MCP endpoint has on this hub. /git/'s bare-HTTP routes, which
+            relay upstream WITH the hub's GitHub credential, are two segments
+            deep and can never match;
+          - ONE well-formed JSON-RPC object naming a listed method - batch,
+            malformed body, or a body past _ANON_BODY_CAP all fall back;
+          - and only when NO token was presented at all (see the call site).
+
+        The claims/token ContextVars stay unset on this path: an anonymous
+        call has no identity downstream, and nothing traversed by the listed
+        methods reads one - tool BODIES do, and tools/list never runs them.
+        `user_only_prefixes` is untouched for anything carrying a token."""
+        addon = path.strip("/")
+        if scope.get("method") != "POST" or not addon or "/" in addon:
+            return False
+        chunks, size = [], 0
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":  # client already gone
+                return False
+            chunks.append(message)
+            size += len(message.get("body", b""))
+            if size > _ANON_BODY_CAP:
+                return False
+            if not message.get("more_body"):
+                break
+        if not _is_surface_call(b"".join(m.get("body", b"") for m in chunks)):
+            return False
+
+        async def replay():
+            # Hand the buffered body back to the app, then defer to the real
+            # channel (disconnect notifications).
+            if chunks:
+                return chunks.pop(0)
+            return await receive()
+
+        await self.app(scope, replay, send)
+        return True
 
 
 def protected_resource_metadata(config: AuthConfig, addon: str | None = None) -> dict:

@@ -142,6 +142,91 @@ def test_token_from_header_ignores_unknown_schemes():
     assert auth_module.token_from_header("") == ""
 
 
+# --- The anonymous surface window: catalog observation without a credential
+#
+# The Tessera Guard gate polls initialize + tools/list to watch the tool
+# surface for drift, and deliberately holds no hub credential of its own.
+# So the SURFACE methods are served without a token - and only them, on the
+# mount roots, for ONE well-formed JSON-RPC object. One test per edge.
+
+MCP_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+}
+
+INITIALIZE = {
+    "jsonrpc": "2.0", "id": 1, "method": "initialize",
+    "params": {"protocolVersion": "2025-03-26", "capabilities": {},
+               "clientInfo": {"name": "observer", "version": "0"}},
+}
+
+TOOLS_LIST = {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+
+
+def test_surface_is_served_anonymously_on_user_and_machine_mounts(app):
+    # whoami is identity="user", ok is machine class: the window ignores the
+    # distinction, because listing runs no tool body and reads no claims.
+    with TestClient(app) as client:
+        user = client.post("/whoami/", json=TOOLS_LIST, headers=MCP_HEADERS)
+        machine = client.post("/ok/", json=TOOLS_LIST, headers=MCP_HEADERS)
+    assert user.status_code == 200 and '"whoami"' in user.text
+    assert machine.status_code == 200 and '"ping"' in machine.text
+
+
+def test_initialize_is_served_anonymously(app):
+    with TestClient(app) as client:
+        r = client.post("/ok/", json=INITIALIZE, headers=MCP_HEADERS)
+    assert r.status_code == 200
+    assert '"serverInfo"' in r.text
+
+
+def test_tools_call_without_a_token_stays_401_with_discovery(app):
+    call = {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {"name": "ping", "arguments": {}}}
+    with TestClient(app) as client:
+        r = client.post("/ok/", json=call, headers=MCP_HEADERS)
+    assert r.status_code == 401
+    assert "oauth-protected-resource" in r.headers["WWW-Authenticate"]
+
+
+def test_an_unreadable_body_stays_401(app):
+    with TestClient(app) as client:
+        r = client.post("/ok/", content=b"\x00not-json", headers=MCP_HEADERS)
+    assert r.status_code == 401
+
+
+def test_a_batch_stays_401_even_all_white(app):
+    with TestClient(app) as client:
+        r = client.post("/ok/", json=[TOOLS_LIST, INITIALIZE],
+                        headers=MCP_HEADERS)
+    assert r.status_code == 401
+
+
+def test_an_invalid_token_on_a_white_method_stays_401(app, rsa_key):
+    # A rotten token is not an anonymous caller.
+    token = sign(rsa_key, exp=int(time.time()) - 10)
+    with TestClient(app) as client:
+        r = client.post("/ok/", json=TOOLS_LIST,
+                        headers=MCP_HEADERS | {"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
+
+
+def test_the_sse_get_stays_authenticated(app):
+    with TestClient(app) as client:
+        r = client.get("/ok/", headers={"Accept": "text/event-stream"})
+    assert r.status_code == 401
+
+
+def test_git_posts_never_pass_the_window(app):
+    # Two path segments: the bare-HTTP proxy, which relays upstream WITH the
+    # hub's credential, is outside the window's shape by construction.
+    with TestClient(app) as client:
+        r = client.post("/git/AntorFr/x/git-upload-pack", json=TOOLS_LIST,
+                        headers=MCP_HEADERS)
+    assert r.status_code == 401
+    assert r.headers["WWW-Authenticate"].startswith("Basic ")
+
+
 # --- Tessera delegation tokens: a second trusted issuer, EdDSA, per-mount aud
 #
 # Tessera Control mints an hour-H token when a human signed for the call in

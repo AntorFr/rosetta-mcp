@@ -2,6 +2,30 @@
 
 > MàJ : 2026-09-29
 
+**`auth` — 0.29.0 : l'observation de catalogue (2026-09-29, ÉCRIT, PAS DÉPLOYÉ ; fiche
+miroir du chantier tessera `tessera-observer-passive`, arbitré par Monsieur)**. La porte
+Guard devant `/google` (en prod depuis la nuit du 28 au 29) ne détient volontairement
+aucun credential du hub — son observateur de catalogue faisait donc une poignée de main
+MCP anonyme toutes les 5 min et prenait un 401 : veille aveugle. Retenu (contre l'écoute
+passive, alerte trop tardive, et contre un endpoint dédié, du code des deux côtés) :
+**ouvrir le geste existant**. Le middleware d'auth sert désormais SANS jeton les quatre
+méthodes de lecture de surface — `initialize`, `notifications/initialized`, `ping`,
+`tools/list` — et rien d'autre. Fenêtre au scalpel, fail-closed sur chaque bord : POST
+seulement (le GET/SSE reste authentifié), racines de mount seulement (un seul segment de
+chemin — les routes HTTP nu de `/git/`, qui relaient amont AVEC le credential GitHub du
+hub, sont à deux segments et ne matchent jamais), UN objet JSON-RPC bien formé (batch
+refusé même tout blanc, corps illisible ou > 64 Ko refusés), et uniquement si AUCUN jeton
+n'est présenté — un jeton invalide reste 401 même sur méthode blanche. Les ContextVars
+claims/token restent vides sur le chemin anonyme (vérifié : rien de traversé par
+`tools/list` ne lit de claims — seuls les corps d'outils le font, et un listing n'en
+exécute aucun). `user_only_prefixes` inchangé pour tout ce qui porte un jeton. 8 tests
+neufs, un par bord du trou (**345 au vert**), canari de surface intact. **Risque assumé
+et arbitré par Monsieur** : noms et schémas d'outils lisibles sans jeton — réseau
+interne, et la cible est que seul Guard joigne le hub.
+
+Reste : release + bump, puis vérifier en prod que le log de `tessera-guard-google` cesse
+de cracher « catalog observation failed: HTTP 401 » toutes les 5 min.
+
 **`google` — 0.28.0 : le pont d'identité sub↔username (LIVRÉE le 2026-09-29 : merge +
 push, tag `v0.28.0`, image GHCR amd64+arm64 vérifiée, manifeste tantive bumpé
 0.26.0→0.28.0 et poussé — mais rollout NON vérifié : bump poussé HORS LAN, sans VPN,

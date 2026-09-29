@@ -493,6 +493,21 @@ to prompt on an MCP endpoint.
 Note the trailing slash: the MCP endpoint of an addon is `/<name>/` - `/<name>`
 answers with a 307 redirect.
 
+One deliberate exception to "everything needs a token": the MCP
+**surface-reading** methods - `initialize`, `notifications/initialized`,
+`ping`, `tools/list` - are served **without a token** on the mount roots, so
+an external catalog observer (a policy gateway watching the tool surface for
+drift) can poll them while deliberately holding no hub credential. The window
+is narrow and fail-closed on every edge: POST only (the SSE stream stays
+authenticated), single-segment paths only (never `/git/`'s bare-HTTP routes),
+one well-formed JSON-RPC object only (a batch is refused even when every
+element is listed, as are unreadable or oversized bodies), and only when no
+token was presented at all - an *invalid* token is refused even on a listed
+method. Everything else, `tools/call` first, keeps the exact 401 + discovery
+pointer above. Tool names and schemas thereby become readable without a
+token: an accepted trade-off for a hub on an internal network, behind a
+gateway meant to be its only caller.
+
 ## Configuration
 
 | Env | Default | Purpose |
