@@ -23,8 +23,20 @@ neufs, un par bord du trou (**345 au vert**), canari de surface intact. **Risque
 et arbitré par Monsieur** : noms et schémas d'outils lisibles sans jeton — réseau
 interne, et la cible est que seul Guard joigne le hub.
 
-Reste : release + bump, puis vérifier en prod que le log de `tessera-guard-google` cesse
-de cracher « catalog observation failed: HTTP 401 » toutes les 5 min.
+**LIVRÉE le 2026-09-29 (v0.29.0, image amd64+arm64, manifeste bumpé, rollout constaté :
+`/health` → 0.29.0, 14 addons ok) et la fenêtre VÉRIFIÉE en prod** : `tools/list` anonyme
+→ 200 sur `/meteo/` via l'ingress, `initialize` anonyme → 200 sur `/google/` en interne
+(exec dans le pod, port 8200), `tools/call` anonyme → 401, racine → 401.
+
+☠️ **MAIS l'objectif de la fiche n'est PAS atteint, et la prémisse « Guard ne change pas
+d'une ligne » est renversée** : l'observateur prend toujours son 401 (ticks 02:15:44,
+02:20:44…), et le log d'accès du hub montre pourquoi — il POSTe sur **`/` (la racine du
+hub)**, pas sur `/google/` (`10.42.0.254 "POST / HTTP/1.1" 401`, IP = le pod
+`tessera-guard-google`). Or à la racine il n'existe AUCUN endpoint MCP : même une fenêtre
+grande ouverte n'y servirait jamais de catalogue. Le trafic réel proxifié, lui, vise bien
+`/google/`. Le correctif est donc CÔTÉ TESSERA : l'URL d'observation de catalogue doit
+porter le chemin du serveur (`/google/`), comme son proxy le fait déjà. Rien à changer
+côté hub — arbitrage remonté à Monsieur plutôt que d'élargir la fenêtre de mon propre chef.
 
 **`google` — 0.28.0 : le pont d'identité sub↔username (LIVRÉE le 2026-09-29 : merge +
 push, tag `v0.28.0`, image GHCR amd64+arm64 vérifiée, manifeste tantive bumpé
