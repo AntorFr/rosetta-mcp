@@ -1,7 +1,7 @@
 # rosetta-mcp
 
 **Rosetta** is a modular [MCP](https://modelcontextprotocol.io) hub: one HTTP
-service hosting many thin, read-only MCP servers (*addons*), each mounted under
+service hosting many thin MCP servers (*addons*), each mounted under
 its own path, behind a single OIDC bearer-token authentication layer.
 
 Like the stone: one endpoint, and every agent reads it in its own tongue.

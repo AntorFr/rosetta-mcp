@@ -1,4 +1,4 @@
-# rosetta - modular MCP hub: thin read-only MCP servers (addons) mounted under
+# rosetta - modular MCP hub: thin MCP servers (addons) mounted under
 # one HTTP endpoint, behind one OIDC bearer-token auth layer (Authelia).
 # API keys live here (server side); agents only ever hold an access token.
 
