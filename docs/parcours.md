@@ -20,7 +20,7 @@ standard **without any functional change**. Product behaviour is described in
   security, deployment) exists and matches the code.
 - **B-2** — `README.md` is true: every addon is listed, the configuration table lists
   every environment variable the code reads, and no statement contradicts the code
-  (e.g. "no volume" while three addons persist under `/data`).
+  (e.g. "no volume" while four addons persist under `/data`).
 - **B-3** — A per-addon reference (`docs/addons.md`: tools, required env, identity
   mode, state file locations) and a data reference (`docs/donnees.md`) exist.
 - **B-4** — `.agent/status.md` (a 1000-line logbook) is replaced by durable docs:
@@ -36,8 +36,8 @@ standard **without any functional change**. Product behaviour is described in
 - **B-8** — Improvements that would change behaviour or deployment are not done but
   written in `docs/recommandations.md`, each with options and a recommendation, for
   the operator to arbitrate.
-- **B-9** — **Invariant**: no functional change. Existing tests pass unmodified (a test
-  may be *added* or moved, not weakened), tool names/schemas, HTTP routes, env
+- **B-9** — **Invariant**: no functional change. Existing tests pass with their assertions unchanged (tests
+  may be *added*; none is weakened or deleted), tool names/schemas, HTTP routes, env
   variable names and defaults, and the image entrypoint are unchanged.
 
 ## Journeys
@@ -48,8 +48,14 @@ standard **without any functional change**. Product behaviour is described in
   PR; CI gives the same verdict.
 - **P-2 — The operator reviews quality and decides** (B-8, B-9). Reads the epic's
   result and `docs/recommandations.md`, then arbitrates each recommendation
-  (accept → a future feature, reject → recorded).
-- **P-3 — An agent client calls a tool** (B-9). Nothing changes: this journey is the
+  (accept → a future feature, reject → recorded in the same file with its reason).
+- **P-4 — A pod cleans a piece of Rosetta without changing it** (B-4, B-5, B-6, B-9).
+  Picks one task (retire `.agent/status.md`; extract one family of duplicated helpers;
+  add the missing `transit` tests); runs the characterisation test and the suite
+  before and after; the diff changes no tool surface and no test assertion.
+- **P-3 — An agent client calls a tool** (B-9). Nothing changes, including for the stored credentials of enrolled users
+  (`docs/donnees.md`: the four stores are read and written exactly as before, the
+  operator still reads `/health` and rotates keys the same way): this journey is the
   regression guard, proven by the schema snapshot and the unchanged test suite.
 
 ## Out of scope
