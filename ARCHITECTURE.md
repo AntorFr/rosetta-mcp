@@ -83,3 +83,34 @@ visible change the operator owns.
 
 - Rewriting addons for style: risk without benefit, contradicts I-4.
 - Adding features found missing during the cleanup: out of scope, go to recommendations.
+
+### AD-doc-1 — The documentation is written from the code and checked mechanically
+Every list in the docs has a source the writer re-reads, never memory or `.agent/status.md`:
+addons = the modules of `src/rosetta/addons/` not starting with `_`; tools = the tool names
+of the characterisation snapshot in `tests/`; environment variables = the variable names
+of the same snapshot, each given in the `README.md` configuration table with its meaning,
+whether it is required, and its default; state files = the code that reads and writes them
+(path from the environment override, format from the serialisation call). The lint and test
+commands in the README are copied from `.github/workflows/docker-publish.yml` (AD-outillage-2),
+not retyped. A claim the code does not confirm is not written; one that cannot be confirmed
+is listed in the task review for the recommendations slice (AD-7). `docs/addons.md` has one
+section per addon in the same order, each with: purpose, tools, required variables, identity
+mode (`machine` or `user`), state files. Rejected: generating the reference from the code at
+build time (a build step is a behaviour change to the image, I-4); one doc per addon (a pod
+would open fifteen files to learn the hub).
+
+### AD-doc-2 — What survives from `.agent/status.md`
+The file is a dated logbook. A passage is **retained** as an `AD-doc-n` entry in
+`ARCHITECTURE.md` when it states a choice that constrains future code and is still true
+in the code: why an addon works the way it does (one upstream call per model in `meteo`,
+the anonymous catalogue window in `auth`, drafts-first sending in `google`, refusal
+beyond the supported date range in `marees`, the proxy design of `git`, and similar),
+with the rejected alternative when the file gives it. It is **abandoned** when it is a
+progress note (ticked boxes, "remaining work", test counts), a deployment or rollout
+state, pod-level infrastructure detail, or a decision since reversed by the code. Entries
+are written in English, one short paragraph each, grouped under a `## Durable decisions
+from the logbook` heading placed after the epic's decisions; a retained decision names the
+module it concerns. The task review lists every logbook passage as retained (with its
+`AD-doc-n`) or abandoned (with a few words of reason), so the cut can be audited. Then
+`.agent/status.md` is deleted (AD-3). Rejected: keeping it under `docs/` (AD-3); carrying
+every passage over (it would reproduce the logbook).
