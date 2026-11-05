@@ -51,7 +51,7 @@ import httpx
 from starlette.responses import RedirectResponse
 
 from ..auth import current_claims
-from ._common import http_client, enrol_page, new_server
+from ._common import enrol_page, http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 

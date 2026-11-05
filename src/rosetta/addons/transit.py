@@ -19,7 +19,7 @@ from datetime import datetime
 
 import httpx
 
-from ._common import http_client, dig, new_server
+from ._common import dig, http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 

@@ -100,7 +100,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from ..auth import MACHINE_SUB_PREFIX, current_claims
-from ._common import http_client, enrol_page, new_server, remote_user
+from ._common import enrol_page, http_client, new_server, remote_user
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
