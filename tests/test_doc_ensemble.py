@@ -7,7 +7,6 @@ littéraux (liste des addons, des fichiers d'état, des commandes) ; le snapshot
 import importlib
 import json
 import re
-import sys
 from pathlib import Path
 
 import pytest
