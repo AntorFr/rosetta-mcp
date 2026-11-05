@@ -544,10 +544,12 @@ gateway meant to be its only caller.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .[dev]
-.venv/bin/ruff check .                                # lint (rules E, F, W, I, B), must print nothing
+.venv/bin/ruff check .                                # lint (rules E, F, W, I, B); prints "All checks passed!" when clean
 .venv/bin/pytest --cov --cov-report=term-missing      # tests + coverage; includes tests/test_surface.py, pinned by tests/surface.json
 ROSETTA_AUTH=off .venv/bin/uvicorn rosetta.main:app --port 8200
 ```
+
+Python ≥ 3.12 is required (`pyproject.toml`). `ROSETTA_AUTH=off` lifts the need for `ROSETTA_ISSUER` and `ROSETTA_EXTERNAL_URL` in a local start.
 
 With no secrets set, `/health` answers `degraded` and names the addons whose variables are missing (`missing env: …`): that is the expected state of a bare local start (stub mode), not a failure.
 
