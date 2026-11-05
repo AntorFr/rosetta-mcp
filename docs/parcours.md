@@ -2,7 +2,7 @@
 
 > Scope: this page records the needs and journeys of the quality epic, done at v0.29.0–0.30.0.
 > It is history, not a description of current behaviour (for that: `README.md`, `docs/addons.md`).
-> `docs/recommandations.md`, cited below, belongs to a later slice and does not exist yet.
+> `docs/recommandations.md`, cited below, was written by the recommendations slice (R-1 to R-11).
 
 Rosetta is a modular MCP hub (see `ARCHITECTURE.md`). This document covers the
 **quality epic** `rosetta-qualite`: bringing the repository to the SDLC chain
@@ -32,7 +32,7 @@ standard **without any functional change**. Product behaviour is described in
 - **B-5** — The code is cleaned **behaviour-preservingly**: helpers duplicated across
   addons are shared from `_common.py`, swallowed exceptions are justified or logged,
   lint is clean, the longest functions are split where it clarifies.
-- **B-6** — Tests prove it: every addon has a dedicated test file (`transit` has none),
+- **B-6** — Tests prove it: every addon has a dedicated test file (at v0.29.0 `transit` had none; it has one now),
   the tool surface (names and input schemas) is pinned by a characterisation test, and
   coverage is measured.
 - **B-7** — CI runs lint and tests with coverage on every pull request, and the image

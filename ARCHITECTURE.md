@@ -98,8 +98,8 @@ no-functional-change epic). Reversed if a documentation fix proves to need a man
 ### AD-2 — Documentation layout
 `README.md` (what/how to run/configure, operator-facing), `ARCHITECTURE.md` (organs,
 `AD-n`, rejections), `docs/addons.md` (per-addon reference), `docs/donnees.md`,
-`docs/parcours.md`, `docs/ecrans.md` (stating there is none); `docs/recommandations.md` is
-not written yet (the recommendations slice creates it).
+`docs/parcours.md`, `docs/ecrans.md` (stating there is none); `docs/recommandations.md` (findings left
+for the operator to decide, AD-7).
 Language: English for `README.md` and `ARCHITECTURE.md`; `docs/addons.md`
 is in French, as the tool descriptions it quotes; the other `docs/` pages are in English. Rejected: one giant README (it is already
 555 lines and wrong in places); a wiki (a pod reads only the repo).
@@ -135,8 +135,8 @@ recommendation. Reversed if a measured first run shows few errors.
 ### AD-7 — Findings that change behaviour become recommendations
 Hard-coded personal contacts in default User-Agents (`contact@antor.fr`), the undocumented
 Anthropic endpoint of `quotas`, unpinned `yt-dlp`, base image not pinned by digest,
-Actions pinned by tag: each is to be written in `docs/recommandations.md` (not yet created: recommendations
-slice) with options and a recommendation. None is applied in this epic, because changing a default or a pin is a
+Actions pinned by tag: each is to be written in `docs/recommandations.md` (R-1 to R-11, all `open`; state and
+how to extend it: AD-recommandations-1) with options and a recommendation. None is applied in this epic, because changing a default or a pin is a
 visible change the operator owns.
 
 ### AD-filet-1 — The characterisation test reads the code, one snapshot file pins it
@@ -183,6 +183,29 @@ without a station, error payload), exercised through the four public tools.
 
 - Rewriting addons for style: risk without benefit, contradicts I-4.
 - Adding features found missing during the cleanup: out of scope, go to recommendations.
+
+### AD-recommandations-1 — Shape and sources of `docs/recommandations.md`
+One entry per finding, each with the same five parts: **Finding** (what is observed and
+where: file and line, or workflow step, as of the version audited), **Why it matters**,
+**Options** (at least two, one of which is "leave as is" when that is a real choice, each
+with its cost and what it changes for the operator), **Recommendation** (one option, with
+the reason), **Status** (`open`, then `accepted` or `declined` with the reason, written
+later by the operator's decision). The seven subjects named by the slice are mandatory:
+personal contacts in default User-Agents, the undocumented `quotas` endpoint, unpinned
+`yt-dlp`, base image not pinned by digest, Actions pinned by tag, mypy, splitting
+`google.py` and the other large modules. Added to them: every finding carried by the
+reviews of the earlier slices (ignored lint findings whose fix would change behaviour,
+AD-outillage-1; helper families left un-extracted, AD-nettoyage-2; claims the
+documentation could not confirm, AD-doc-1), found in the three ADs named above and in the review notes of the earlier slices (kept by the build
+tooling outside this repository; R-8 to R-11 are what they held when this file was written). Each entry carries a cost class for the operator's decision of its
+recommended option: S (a text, config or pin change, no code), M (a bounded code change
+under the existing tests), L (a refactor or a change of behaviour needing its own slice).
+Entries are ordered by that class, S first, within two groups: the seven mandatory
+subjects, then the entries added from the earlier slices' reviews (appended after the
+seven, never reordering them). The file opens with a table of contents listing id,
+subject, cost class and recommended option. The slice writes the file only: no entry is applied, and `src/`, `Dockerfile` and
+`.github/` stay untouched (AD-7, I-4). Rejected: opening an issue per finding (a pod
+reads only the repo); sorting by severity (nothing here is a defect the epic may fix).
 
 ## Decisions of the `rosetta-qualite-nettoyage` slice
 
@@ -236,7 +259,7 @@ import, a bare `raise` chained with `from`), or **ignored one by one** (`ignore`
 `per-file-ignores`) with a comment giving the reason; a whole rule is never removed from the
 set to silence it. A fix that would change behaviour (a default argument, a caught
 exception type, an output string) is not made: it is ignored with its reason and the case
-is carried to `docs/recommandations.md` (to be created by the recommendations slice, AD-7). `ruff format`
+is carried to `docs/recommandations.md` (AD-7). `ruff format`
 is not run: reformatting the code base would bury the diffs of the cleanup slice. `E501` stays
 selected; if the audit shows long lines, `line-length` is raised once, with a comment
 giving the measured longest line, rather than ignoring the rule. `ruff` joins the `dev` extra.

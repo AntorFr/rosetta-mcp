@@ -17,7 +17,8 @@ module and nothing else - no new pod, no key sprayed into agent environments.
 
 Where to go next: [`ARCHITECTURE.md`](ARCHITECTURE.md) for the map of the code and its
 invariants; `docs/addons.md` for each addon; `docs/donnees.md` for the files the
-hub writes; `docs/parcours.md` and `docs/ecrans.md` for the user journeys.
+hub writes; `docs/parcours.md` and `docs/ecrans.md` for the user journeys; `docs/recommandations.md` for the
+improvements that would change behaviour, written as options for the operator to decide (none applied).
 
 ## Addons
 
@@ -42,8 +43,8 @@ The MCP endpoint is `/<name>/` (with the trailing slash; `/<name>` answers 307).
 | `disabled` | excluded by `ROSETTA_ADDONS` |
 
 Per-addon state is reported on `GET /health`. Modules starting with `_` are shared
-helpers, never mounted. Each addon also runs standalone over stdio for local debugging
-(`python -m rosetta.addons.maps`).
+helpers, never mounted. Most addons also run standalone over stdio for local debugging
+(`python -m rosetta.addons.maps`); `courrier`, `git`, `github`, `postier`, `quotas` and `verbatim` do not (no `__main__` block).
 
 An addon with `identity = "user"` holds per-user credentials server-side, keyed on the
 caller's username; machine tokens are refused on its path. Its enrolment routes sit
