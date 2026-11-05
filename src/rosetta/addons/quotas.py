@@ -100,7 +100,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from ..auth import MACHINE_SUB_PREFIX, current_claims
-from ._common import enrol_page, http_client, new_server, remote_user
+from ._common import current_subject, enrol_page, http_client, new_server, remote_user
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -178,15 +178,7 @@ def _user_file(sub: str) -> str:
     return os.path.join(_data_dir(), "users", f"{_safe(sub)}.json")
 
 
-def _current_sub() -> str | None:
-    claims = current_claims.get()
-    if not claims:
-        return None
-    # Same key as google and withings: Authelia access tokens may carry an
-    # opaque `sub`, so the username claim wins, NFC-normalized to match what
-    # enrolment filed it under.
-    value = claims.get("preferred_username") or claims.get("sub")
-    return unicodedata.normalize("NFC", str(value)) if value else None
+_current_sub = current_subject  # cf. _common
 
 
 def _is_machine() -> bool:

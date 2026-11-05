@@ -50,8 +50,7 @@ from zoneinfo import ZoneInfo
 import httpx
 from starlette.responses import RedirectResponse
 
-from ..auth import current_claims
-from ._common import enrol_page, http_client, new_server
+from ._common import current_subject, enrol_page, http_client, new_server, remote_user
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -230,14 +229,7 @@ def _oauth_client() -> dict | str:
     return {"client_id": client_id, "client_secret": client_secret}
 
 
-def _current_sub() -> str | None:
-    claims = current_claims.get()
-    if not claims:
-        return None
-    # Same key as the google addon: Authelia access tokens may carry an opaque
-    # `sub`, so the username claim wins, NFC-normalized to match enrolment.
-    value = claims.get("preferred_username") or claims.get("sub")
-    return unicodedata.normalize("NFC", str(value)) if value else None
+_current_sub = current_subject  # cf. _common
 
 
 def _read_user(sub: str) -> dict | None:
@@ -773,27 +765,13 @@ def _page(glyph: str, title: str, message: str, status: int = 200):
     return enrol_page("Withings", glyph, title, message, status)
 
 
-def _remote_user(request) -> str | None:
-    # Set by the Authelia forwardAuth in front of these paths (ingress-level).
-    value = request.headers.get("Remote-User")
-    if value is None:
-        return None
-    # Headers are latin-1 on the wire while Authelia emits UTF-8: recover the
-    # accents, then NFC so the credential key is stable.
-    try:
-        value = value.encode("latin-1").decode("utf-8")
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
-    return unicodedata.normalize("NFC", value)
-
-
 def _redirect_uri() -> str:
     external = os.environ.get("ROSETTA_EXTERNAL_URL", "")
     return f"{external.rstrip('/')}/withings/callback"
 
 
 async def enroll(request):
-    sub = _remote_user(request)
+    sub = remote_user(request)
     if not sub:
         return _page("🚪", "Accès refusé",
                      "Cette page passe par le SSO de la maison — pas par la porte de service.", 403)

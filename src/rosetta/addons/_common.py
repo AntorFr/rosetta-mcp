@@ -11,6 +11,8 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import HTMLResponse
 
+from ..auth import current_claims
+
 TIMEOUT = 15.0
 
 
@@ -48,6 +50,20 @@ def remote_user(request) -> str | None:
         pass
     # NFC: the same name typed on two keyboards must yield the same key.
     return unicodedata.normalize("NFC", value)
+
+
+def current_subject() -> str | None:
+    """The calling user's store key from the verified token claims, or None.
+
+    Authelia access tokens may carry an opaque `sub`, so the `preferred_username`
+    claim wins, NFC-normalized to match what enrolment (`remote_user`) filed the
+    credential under. One byte of difference here loses an enrolled account.
+    """
+    claims = current_claims.get()
+    if not claims:
+        return None
+    value = claims.get("preferred_username") or claims.get("sub")
+    return unicodedata.normalize("NFC", str(value)) if value else None
 
 
 # --------------------------------------------------------------------------
