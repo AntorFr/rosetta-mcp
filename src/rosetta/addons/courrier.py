@@ -50,6 +50,7 @@ import email.policy
 import hashlib
 import imaplib
 import json
+import logging
 import os
 import re
 import time
@@ -61,6 +62,8 @@ import httpx
 
 from ..auth import current_claims, current_token
 from ._common import TIMEOUT, new_server
+
+logger = logging.getLogger("rosetta.courrier")
 
 identity = "user"
 
@@ -168,7 +171,7 @@ def _summary(uid: str, msg: email.message.Message, flags: str) -> dict:
     try:
         date = parsedate_to_datetime(date).isoformat()
     except Exception:
-        pass
+        logger.debug("courrier: Date illisible %r, gardée brute", date)
     return {
         "uid": uid,
         "de": msg.get("From", ""),

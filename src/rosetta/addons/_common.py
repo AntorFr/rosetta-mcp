@@ -2,15 +2,36 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
+import logging
 import os
+import secrets
+import time
 import unicodedata
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import HTMLResponse
 
+from ..auth import current_claims
+
+logger = logging.getLogger("rosetta.common")
+
 TIMEOUT = 15.0
+
+
+def http_client(transport, timeout=TIMEOUT, **kw) -> httpx.AsyncClient:
+    """The one place an addon's `httpx.AsyncClient` is built.
+
+    `transport` is the addon's own test hook (`addon._transport`, None in production),
+    passed in rather than read here so tests keep patching the addon. Extra keyword
+    arguments (headers, follow_redirects) go straight to httpx.
+    """
+    return httpx.AsyncClient(timeout=timeout, transport=transport, **kw)
 
 
 def remote_user(request) -> str | None:
@@ -34,9 +55,23 @@ def remote_user(request) -> str | None:
     try:
         value = value.encode("latin-1").decode("utf-8")
     except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
+        logger.debug("Remote-User n'est pas du latin-1 recodé, gardé tel quel")
     # NFC: the same name typed on two keyboards must yield the same key.
     return unicodedata.normalize("NFC", value)
+
+
+def current_subject() -> str | None:
+    """The calling user's store key from the verified token claims, or None.
+
+    Authelia access tokens may carry an opaque `sub`, so the `preferred_username`
+    claim wins, NFC-normalized to match what enrolment (`remote_user`) filed the
+    credential under. One byte of difference here loses an enrolled account.
+    """
+    claims = current_claims.get()
+    if not claims:
+        return None
+    value = claims.get("preferred_username") or claims.get("sub")
+    return unicodedata.normalize("NFC", str(value)) if value else None
 
 
 # --------------------------------------------------------------------------
@@ -160,3 +195,75 @@ def dig(d, *path, default=None):
         if cur is None:
             return default
     return cur
+
+
+def read_user(path: str, default=None):
+    """A per-subject JSON record, or `default` if the file is absent or unreadable."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
+def write_user(path: str, record: dict) -> None:
+    """Atomic (`.tmp` + chmod 600 + replace): the refresh token may rotate, and a
+    half-written file is a lost credential - there is no way to re-derive it but
+    another browser login."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(record, f)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+# --- `state` OAuth signé (google, withings) -------------------------------
+# Format `expiry.sub.sig` en base64 url-safe, digest SHA-256 complet, validité 600 s,
+# clé `state.key` (0600) sous le répertoire de données. github garde son propre
+# `state` (format `sub|ts`, digest tronqué, clé distincte) : l'unifier invaliderait
+# les états en vol.
+
+STATE_TTL = 600
+
+
+def state_key(data_dir: str) -> bytes:
+    path = os.path.join(data_dir, "state.key")
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        key = secrets.token_bytes(32)
+        os.makedirs(data_dir, exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(key)
+        os.chmod(path, 0o600)
+        return key
+
+
+def sign_state(sub: str, key: bytes) -> str:
+    payload = f"{int(time.time()) + STATE_TTL}.{sub}"
+    sig = hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}.{sig}".encode()).decode()
+
+
+def verify_state(state: str, key: bytes) -> str | None:
+    try:
+        expiry, sub, sig = base64.urlsafe_b64decode(state.encode()).decode().split(".", 2)
+        payload = f"{expiry}.{sub}"
+        if not hmac.compare_digest(sig, hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()):
+            return None
+        if time.time() > int(expiry):
+            return None
+        return sub
+    except Exception:
+        return None
+
+
+def state_codec(data_dir):
+    """`(sign, verify)` d'un addon ; `data_dir` est appelé à chaque usage (l'addon
+    garde son propre `_data_dir`, que les tests redirigent)."""
+    return (
+        lambda sub: sign_state(sub, state_key(data_dir())),
+        lambda state: verify_state(state, state_key(data_dir())),
+    )

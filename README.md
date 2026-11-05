@@ -544,9 +544,18 @@ gateway meant to be its only caller.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .[dev]
-.venv/bin/pytest
+.venv/bin/ruff check .                                # lint (rules E, F, W, I, B); prints "All checks passed!" when clean
+.venv/bin/pytest --cov --cov-report=term-missing      # tests + coverage; includes tests/test_surface.py, pinned by tests/surface.json
 ROSETTA_AUTH=off .venv/bin/uvicorn rosetta.main:app --port 8200
 ```
+
+Python ≥ 3.12 is required (`pyproject.toml`). `ROSETTA_AUTH=off` lifts the need for `ROSETTA_ISSUER` and `ROSETTA_EXTERNAL_URL` in a local start.
+
+With no secrets set, `/health` answers `degraded` and names the addons whose variables are missing (`missing env: …`): that is the expected state of a bare local start (stub mode), not a failure.
+
+The last two commands are exactly what the `test` job of the `docker-publish` workflow runs; the
+`build` job needs it. Coverage fails below `fail_under` in `pyproject.toml` (the measured total, rounded
+down: raise it when coverage rises, never lower it). Lint ignores are listed in `pyproject.toml`, each with its reason.
 
 ## Deployment
 

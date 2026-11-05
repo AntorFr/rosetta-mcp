@@ -32,14 +32,9 @@ Tool descriptions are in French - runtime UX for the household agents.
 """
 
 import asyncio
-import base64
-import hashlib
-import hmac
-import json
 import logging
 import os
 import re
-import secrets
 import time
 import unicodedata
 from datetime import date, datetime, timedelta, timezone, tzinfo
@@ -50,10 +45,19 @@ from zoneinfo import ZoneInfo
 import httpx
 from starlette.responses import RedirectResponse
 
-from ..auth import current_claims
-from ._common import TIMEOUT, enrol_page, new_server
+from ._common import (
+    current_subject,
+    enrol_page,
+    http_client,
+    new_server,
+    read_user,
+    remote_user,
+    state_codec,
+    write_user,
+)
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger("rosetta.withings")
 
 identity = "user"
 
@@ -85,7 +89,7 @@ _transport = None
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport)
+    return http_client(_transport)
 
 
 # --------------------------------------------------------------------------
@@ -230,34 +234,15 @@ def _oauth_client() -> dict | str:
     return {"client_id": client_id, "client_secret": client_secret}
 
 
-def _current_sub() -> str | None:
-    claims = current_claims.get()
-    if not claims:
-        return None
-    # Same key as the google addon: Authelia access tokens may carry an opaque
-    # `sub`, so the username claim wins, NFC-normalized to match enrolment.
-    value = claims.get("preferred_username") or claims.get("sub")
-    return unicodedata.normalize("NFC", str(value)) if value else None
+_current_sub = current_subject  # cf. _common
 
 
 def _read_user(sub: str) -> dict | None:
-    try:
-        with open(_user_file(sub)) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
+    return read_user(_user_file(sub), None)
 
 
 def _write_user(sub: str, record: dict) -> None:
-    """Atomic: the refresh token rotates, and a half-written file is a lost
-    account (no way to re-derive it but a browser re-enrolment)."""
-    os.makedirs(os.path.join(_data_dir(), "users"), exist_ok=True)
-    path = _user_file(sub)
-    tmp = f"{path}.tmp"
-    with open(tmp, "w") as f:
-        json.dump(record, f)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    write_user(_user_file(sub), record)
 
 
 def _enrol_hint(sub: str) -> str:
@@ -381,6 +366,7 @@ def _tz() -> tzinfo:
         try:
             return ZoneInfo(name)
         except Exception:
+            logger.debug("withings: fuseau %r inconnu, suivant", name)
             continue
     return timezone.utc
 
@@ -430,7 +416,7 @@ def _local(epoch, tz_name: str | None = None) -> str | None:
         try:
             zone = ZoneInfo(tz_name)
         except Exception:
-            pass
+            logger.debug("withings: fuseau %r inconnu, fuseau maison", tz_name)
     return datetime.fromtimestamp(int(epoch), tz=zone).isoformat()
 
 
@@ -482,6 +468,28 @@ def _minutes(seconds) -> float | None:
 # Tools - lecture seule, aucune écriture possible
 # --------------------------------------------------------------------------
 
+def _group_entry(group: dict) -> dict:
+    """One measure group as the tool renders it: dated, labelled, scaled."""
+    measures = []
+    for measure in group.get("measures") or []:
+        code = int(measure.get("type", 0))
+        label, unit = MEASURE_TYPES.get(code, (f"type {code}", None))
+        entry = {"type": label, "value": _scaled(measure)}
+        if unit:
+            entry["unit"] = unit
+        position = measure.get("position")
+        if position is not None:
+            entry["position"] = MEASURE_POSITIONS.get(int(position), f"position {position}")
+        measures.append(entry)
+    entry = {"date": _local(group.get("date"), group.get("timezone")),
+             "measures": measures}
+    if group.get("attrib") in MANUAL_ATTRIB:
+        entry["manual"] = True
+    if group.get("comment"):
+        entry["comment"] = group["comment"]
+    return entry
+
+
 @mcp.tool()
 async def withings_measures(start: str | None = None, end: str | None = None,
                             types: str | None = None, max_results: int = 30) -> dict:
@@ -525,26 +533,7 @@ async def withings_measures(start: str | None = None, end: str | None = None,
     groups = sorted(body.get("measuregrps") or [],
                     key=lambda g: g.get("date") or 0, reverse=True)
     limit = max(1, min(int(max_results), 200))
-    out = []
-    for group in groups[:limit]:
-        measures = []
-        for measure in group.get("measures") or []:
-            code = int(measure.get("type", 0))
-            label, unit = MEASURE_TYPES.get(code, (f"type {code}", None))
-            entry = {"type": label, "value": _scaled(measure)}
-            if unit:
-                entry["unit"] = unit
-            position = measure.get("position")
-            if position is not None:
-                entry["position"] = MEASURE_POSITIONS.get(int(position), f"position {position}")
-            measures.append(entry)
-        entry = {"date": _local(group.get("date"), group.get("timezone")),
-                 "measures": measures}
-        if group.get("attrib") in MANUAL_ATTRIB:
-            entry["manual"] = True
-        if group.get("comment"):
-            entry["comment"] = group["comment"]
-        out.append(entry)
+    out = [_group_entry(group) for group in groups[:limit]]
 
     answer: dict = {"groups": out}
     if len(groups) > limit:
@@ -734,57 +723,11 @@ async def withings_devices() -> dict:
 # Enrolment (browser flow, guarded by the ingress forwardAuth)
 # --------------------------------------------------------------------------
 
-def _state_key() -> bytes:
-    path = os.path.join(_data_dir(), "state.key")
-    try:
-        with open(path, "rb") as f:
-            return f.read()
-    except FileNotFoundError:
-        key = secrets.token_bytes(32)
-        os.makedirs(_data_dir(), exist_ok=True)
-        with open(path, "wb") as f:
-            f.write(key)
-        os.chmod(path, 0o600)
-        return key
-
-
-def _sign_state(sub: str) -> str:
-    payload = f"{int(time.time()) + 600}.{sub}"
-    sig = hmac.new(_state_key(), payload.encode(), hashlib.sha256).hexdigest()
-    return base64.urlsafe_b64encode(f"{payload}.{sig}".encode()).decode()
-
-
-def _verify_state(state: str) -> str | None:
-    try:
-        expiry, sub, sig = base64.urlsafe_b64decode(state.encode()).decode().split(".", 2)
-        payload = f"{expiry}.{sub}"
-        if not hmac.compare_digest(
-            sig, hmac.new(_state_key(), payload.encode(), hashlib.sha256).hexdigest()
-        ):
-            return None
-        if time.time() > int(expiry):
-            return None
-        return sub
-    except Exception:
-        return None
+_sign_state, _verify_state = state_codec(_data_dir)
 
 
 def _page(glyph: str, title: str, message: str, status: int = 200):
     return enrol_page("Withings", glyph, title, message, status)
-
-
-def _remote_user(request) -> str | None:
-    # Set by the Authelia forwardAuth in front of these paths (ingress-level).
-    value = request.headers.get("Remote-User")
-    if value is None:
-        return None
-    # Headers are latin-1 on the wire while Authelia emits UTF-8: recover the
-    # accents, then NFC so the credential key is stable.
-    try:
-        value = value.encode("latin-1").decode("utf-8")
-    except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
-    return unicodedata.normalize("NFC", value)
 
 
 def _redirect_uri() -> str:
@@ -793,7 +736,7 @@ def _redirect_uri() -> str:
 
 
 async def enroll(request):
-    sub = _remote_user(request)
+    sub = remote_user(request)
     if not sub:
         return _page("🚪", "Accès refusé",
                      "Cette page passe par le SSO de la maison — pas par la porte de service.", 403)

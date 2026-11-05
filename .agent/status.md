@@ -1,6 +1,37 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-09-29
+> MàJ : 2026-11-05
+
+**Epic `rosetta-qualite`, feature `rosetta-qualite-nettoyage` (2026-11-05, ÉCRIT, PAS FUSIONNÉ)** :
+nettoyage sans changement de comportement (`surface.json` inchangé, aucune assertion modifiée). Extraits dans
+`_common.py` : `http_client` (tous les addons, chacun garde son crochet `_transport`), `current_subject` et
+`remote_user`, `read_user`/`write_user` (quotas, withings ; format des fichiers inchangé), `state` OAuth signé de
+google et withings. Restent volontairement à part (AD-nettoyage-1/2) : `state` de github (autre format, invaliderait les
+états en vol), magasins de google et github, `_current_sub` de google (pont d'identité), fuseaux (replis différents),
+pagination (aucune copie). Les dix `except … : pass|continue` sont journalisés en debug ; `ruff check --select
+S110,S112,SIM105 src` est vide (ces règles sont dans `pyproject.toml`). Coupées en helpers privés : trace_pois, marees,
+mail_attachment, wind_forecast, create_app, withings_measures. 428 tests, couverture 85,73 % (plancher 85), `ruff check .` propre.
+Reste : mypy, épinglage des Actions, découpage de `google.py` & co. (recommandation). Piège : un helper partagé reçoit
+le transport en argument, il ne lit pas de global de `_common` (les tests patchent `addon._transport`).
+
+**Epic `rosetta-qualite`, feature `rosetta-qualite-outillage` (2026-11-05, ÉCRIT, PAS FUSIONNÉ)** :
+`ruff check .` propre (jeu `E, F, W, I, B`, `line-length` 178 = plus longue ligne mesurée, 3 `per-file-ignores`
+commentés sur des tests : E731, B905, E741) ; corrections sans effet de comportement (imports, `raise … from`,
+lambda → `def`, variable `l` → `ln`), aucune assertion de test modifiée, `surface.json` inchangé.
+Couverture : `fail_under = 85` (mesuré 85,23 %, 382 tests). Le job `test` de `docker-publish.yml` lance
+`ruff check .` puis `pytest --cov --cov-report=term-missing` avant `build`. Reste : mypy, épinglage des Actions
+(AD-7), nettoyage. Piège : le plancher suit la mesure, on le monte, on ne le baisse pas. Décisions : AD-outillage-1/2.
+
+**Epic `rosetta-qualite`, feature `rosetta-qualite-filet` (2026-11-05, ÉCRIT, PAS FUSIONNÉ dans `main`)** :
+le filet avant tout nettoyage. Rien dans `src/` n'a changé (v0.29.0). Ajouts, tous sous `tests/` :
+`test_surface.py` compare la surface construite depuis le code (outils : nom, docstring, schéma d'entrée ;
+routes et `open_paths` ; clés de `/health` ; noms de variables d'environnement lues) à l'instantané
+`surface.json`, écrit une fois depuis la v0.29.0 ; `test_transit.py` couvre l'addon `transit` hors réseau
+(`httpx.AsyncClient` patché, aucun hook dans `src/`). **372 tests au vert.** Vérifié : renommer un outil ou une
+variable de `transit` fait échouer le filet. Pièges : un diff de `surface.json` est un changement de
+comportement, jamais une régénération de refactor ; une lecture d'environnement non littérale nouvelle fait
+échouer le test (seules `main.py` et `transit.py` `Provider.key` sont admises, déjà épinglées). Reste de
+l'epic : couverture, lint, CI, nettoyage (features suivantes). Décisions : `ARCHITECTURE.md`, AD-filet-1/2.
 
 **`auth` — 0.29.0 : l'observation de catalogue (2026-09-29, ÉCRIT, PAS DÉPLOYÉ ; fiche
 miroir du chantier tessera `tessera-observer-passive`, arbitré par Monsieur)**. La porte

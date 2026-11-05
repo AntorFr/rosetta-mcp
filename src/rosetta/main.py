@@ -95,12 +95,8 @@ def discover_addons(package=None, enabled: set[str] | None = None) -> list[Addon
     return found
 
 
-def create_app(addons_package=None) -> Starlette:
-    auth_config = AuthConfig.from_env()
-    enabled_env = os.environ.get("ROSETTA_ADDONS", "").strip()
-    enabled = {n.strip() for n in enabled_env.split(",") if n.strip()} if enabled_env else None
-    addons = discover_addons(addons_package, enabled)
-
+def _build_mounts(addons) -> tuple[list, list]:
+    """(mounts, addon_routes): each mounted addon's HTTP app and extra routes."""
     mounts, addon_routes = [], []
     for addon in addons:
         if not addon.mounted:
@@ -114,12 +110,26 @@ def create_app(addons_package=None) -> Starlette:
         except Exception as exc:
             logger.exception("addon %s failed to build its HTTP app", addon.name)
             addon.state, addon.detail = "error", f"app build failed: {type(exc).__name__}: {exc}"
+    return mounts, addon_routes
 
-    auth_config = dataclasses.replace(
+
+def _with_addon_prefixes(auth_config: AuthConfig, addons) -> AuthConfig:
+    """The auth config told which addon prefixes are user-only or open."""
+    return dataclasses.replace(
         auth_config,
         user_only_prefixes=tuple(f"/{a.name}" for a in addons if a.mounted and a.identity == "user"),
         open_prefixes=tuple(f"/{a.name}{p}" for a in addons if a.mounted for p in a.open_paths),
     )
+
+
+def create_app(addons_package=None) -> Starlette:
+    auth_config = AuthConfig.from_env()
+    enabled_env = os.environ.get("ROSETTA_ADDONS", "").strip()
+    enabled = {n.strip() for n in enabled_env.split(",") if n.strip()} if enabled_env else None
+    addons = discover_addons(addons_package, enabled)
+
+    mounts, addon_routes = _build_mounts(addons)
+    auth_config = _with_addon_prefixes(auth_config, addons)
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
