@@ -55,7 +55,7 @@ more than they inform it.
 ### AD-4 — "No functional change" is made testable
 Before any refactor, a characterisation test pins the tool surface (every addon's tool
 names and input schemas, the route list, `/health` shape) and the env variable names
-read by the code. Refactors must keep it and the existing 345 tests green. Rejected:
+read by the code. Refactors must keep it and the existing tests green. Rejected:
 trusting review alone.
 
 ### AD-5 — Shared helpers go to `_common.py`, behaviour-preserving
