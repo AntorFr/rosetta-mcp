@@ -1,6 +1,17 @@
 # Status — rosetta-mcp
 
-> MàJ : 2026-09-29
+> MàJ : 2026-11-05
+
+**Epic `rosetta-qualite`, feature `rosetta-qualite-filet` (2026-11-05, ÉCRIT, PAS FUSIONNÉ dans `main`)** :
+le filet avant tout nettoyage. Rien dans `src/` n'a changé (v0.29.0). Ajouts, tous sous `tests/` :
+`test_surface.py` compare la surface construite depuis le code (outils : nom, docstring, schéma d'entrée ;
+routes et `open_paths` ; clés de `/health` ; noms de variables d'environnement lues) à l'instantané
+`surface.json`, écrit une fois depuis la v0.29.0 ; `test_transit.py` couvre l'addon `transit` hors réseau
+(`httpx.AsyncClient` patché, aucun hook dans `src/`). **372 tests au vert.** Vérifié : renommer un outil ou une
+variable de `transit` fait échouer le filet. Pièges : un diff de `surface.json` est un changement de
+comportement, jamais une régénération de refactor ; une lecture d'environnement non littérale nouvelle fait
+échouer le test (seules `main.py` et `transit.py` `Provider.key` sont admises, déjà épinglées). Reste de
+l'epic : couverture, lint, CI, nettoyage (features suivantes). Décisions : `ARCHITECTURE.md`, AD-filet-1/2.
 
 **`auth` — 0.29.0 : l'observation de catalogue (2026-09-29, ÉCRIT, PAS DÉPLOYÉ ; fiche
 miroir du chantier tessera `tessera-observer-passive`, arbitré par Monsieur)**. La porte
