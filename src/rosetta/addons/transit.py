@@ -19,7 +19,7 @@ from datetime import datetime
 
 import httpx
 
-from ._common import TIMEOUT, dig, new_server
+from ._common import http_client, dig, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -94,7 +94,7 @@ async def _resolve_stop_area(client: httpx.AsyncClient, provider: Provider, stat
 async def _departures(provider: Provider, station: str, count: int) -> dict:
     if err := provider.need_key():
         return {"error": err}
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+    async with http_client(None) as client:
         stop = await _resolve_stop_area(client, provider, station)
         if isinstance(stop, str):
             return {"error": stop}
@@ -126,7 +126,7 @@ async def _departures(provider: Provider, station: str, count: int) -> dict:
 async def _disruptions(provider: Provider, station: str | None) -> dict:
     if err := provider.need_key():
         return {"error": err}
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+    async with http_client(None) as client:
         if station:
             stop = await _resolve_stop_area(client, provider, station)
             if isinstance(stop, str):

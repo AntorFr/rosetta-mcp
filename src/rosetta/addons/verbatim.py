@@ -44,7 +44,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 
-from ._common import TIMEOUT, new_server
+from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -79,7 +79,7 @@ _cache: dict[tuple, tuple[float, dict]] = {}
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport, follow_redirects=True)
+    return http_client(_transport, follow_redirects=True)
 
 
 # ── la plateforme ──────────────────────────────────────────────────────────

@@ -51,7 +51,7 @@ import httpx
 from starlette.responses import RedirectResponse
 
 from ..auth import current_claims
-from ._common import TIMEOUT, enrol_page, new_server
+from ._common import http_client, enrol_page, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -85,7 +85,7 @@ _transport = None
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport)
+    return http_client(_transport)
 
 
 # --------------------------------------------------------------------------

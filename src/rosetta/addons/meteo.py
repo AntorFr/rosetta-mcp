@@ -70,7 +70,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from ._common import TIMEOUT, new_server
+from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("rosetta.meteo")
@@ -105,7 +105,7 @@ MAX_MODELS = 5
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport)
+    return http_client(_transport)
 
 
 def _tz() -> str:

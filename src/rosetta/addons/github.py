@@ -63,7 +63,7 @@ import httpx
 from starlette.responses import RedirectResponse
 
 from ..auth import current_claims
-from ._common import TIMEOUT, dig, enrol_page, new_server, remote_user
+from ._common import http_client, dig, enrol_page, new_server, remote_user
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -81,7 +81,7 @@ _transport = None  # crochet de test : les tests injectent un httpx.MockTranspor
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport)
+    return http_client(_transport)
 
 
 def _page(glyph, title, message, status=200):

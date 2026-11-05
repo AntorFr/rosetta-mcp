@@ -6,11 +6,22 @@ import json
 import os
 import unicodedata
 
+import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import HTMLResponse
 
 TIMEOUT = 15.0
+
+
+def http_client(transport, timeout=TIMEOUT, **kw) -> httpx.AsyncClient:
+    """The one place an addon's `httpx.AsyncClient` is built.
+
+    `transport` is the addon's own test hook (`addon._transport`, None in production),
+    passed in rather than read here so tests keep patching the addon. Extra keyword
+    arguments (headers, follow_redirects) go straight to httpx.
+    """
+    return httpx.AsyncClient(timeout=timeout, transport=transport, **kw)
 
 
 def remote_user(request) -> str | None:

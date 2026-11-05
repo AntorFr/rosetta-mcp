@@ -53,7 +53,7 @@ from collections import deque
 
 import httpx
 
-from ._common import TIMEOUT, new_server
+from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("rosetta.food")
@@ -119,9 +119,8 @@ _search_quota = _Quota(10, 60.0, "search")
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        timeout=TIMEOUT,
-        transport=_transport,
+    return http_client(
+        _transport,
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
     )
 

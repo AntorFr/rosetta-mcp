@@ -65,7 +65,7 @@ from urllib.parse import urlencode
 import httpx
 from starlette.responses import JSONResponse, PlainTextResponse
 
-from ._common import new_server
+from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -92,7 +92,7 @@ _transport = None
 
 
 def _client(timeout: float = ROUTE_TIMEOUT) -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=timeout, transport=_transport)
+    return http_client(_transport, timeout)
 
 
 def _brouter_url() -> str:
