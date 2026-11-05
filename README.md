@@ -161,7 +161,7 @@ work without it. The hub does not refuse to start on a missing one; an addon's
 | `MAIL_IMAP_HOST` | `courrier` | yes | none | IMAP host of the mailboxes (port 993, TLS) |
 | `MAIL_DOMAIN` | `courrier` | yes | none | family mail domain |
 | `MAIL_DRAFTS_FOLDER` | `courrier` | no | `Drafts` | IMAP folder receiving drafts |
-| `MAIL_VAULT_ADDR` | `courrier` | no | empty | Vault address from which mailbox passwords are read |
+| `MAIL_VAULT_ADDR` | `courrier` | yes in practice (mailbox passwords come only from the vault) | empty | Vault (OpenBao) address from which mailbox passwords are read |
 | `MAIL_VAULT_MOUNT` | `courrier` | no | `jwt-authelia` | Vault JWT auth mount |
 | `MAIL_VAULT_ROLE` | `courrier` | no | `rosetta-mail` | Vault role |
 | `OVH_APPLICATION_KEY` | `courrier` | no | none | OVH API key, needed for the alias tools |
@@ -187,6 +187,9 @@ python3 -m venv .venv
 .venv/bin/pytest --cov --cov-report=term-missing      # tests + coverage
 ROSETTA_AUTH=off .venv/bin/uvicorn rosetta.main:app --port 8200   # local start (not CI)
 ```
+
+Once started with auth off, an addon answers MCP over POST on its slash-terminated path, e.g.
+`curl -s -X POST localhost:8200/food/ -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`.
 
 To run it as the container (auth off, no secrets, local only):
 

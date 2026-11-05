@@ -1,7 +1,7 @@
 # Rosetta — data
 
 Rosetta has no database. Its state is a set of **per-subject files** written by the
-user-data addons, under a volume. This epic changes none of them. Everything below is
+user-data addons, under a volume. Everything below is
 read from the code (`src/rosetta/addons/_common.py` and the four addons); a field the
 code does not write is not listed.
 

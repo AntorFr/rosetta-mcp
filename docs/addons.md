@@ -25,14 +25,15 @@ Les boîtes mail propres de la maison (OVH Zimbra, `@<MAIL_DOMAIN>`) : lecture, 
 
 - **Identité** : `user`
 - **Variables requises** : `MAIL_IMAP_HOST`, `MAIL_DOMAIN`
-- **Autres variables** : optionnelles : `MAIL_DRAFTS_FOLDER` (défaut `Drafts`), `MAIL_VAULT_ADDR`, `MAIL_VAULT_MOUNT` (défaut `jwt-authelia`), `MAIL_VAULT_ROLE` (défaut `rosetta-mail`) pour le mot de passe via le coffre, `OVH_APPLICATION_KEY`, `OVH_APPLICATION_SECRET`, `OVH_CONSUMER_KEY` pour les alias.
+- **Autres variables** : optionnelles : `MAIL_DRAFTS_FOLDER` (défaut `Drafts`), `MAIL_VAULT_ADDR` (en pratique indispensable : le mot de passe de la boîte ne vient que du coffre, sans lui chaque appel échoue), `MAIL_VAULT_MOUNT` (défaut `jwt-authelia`), `MAIL_VAULT_ROLE` (défaut `rosetta-mail`) pour le mot de passe via le coffre, `OVH_APPLICATION_KEY`, `OVH_APPLICATION_SECRET`, `OVH_CONSUMER_KEY` pour les alias.
+- **Identité de la boîte** : le login est la claim `mail_local` du jeton, à défaut `preferred_username`. Le coffre (OpenBao) doit avoir un montage d'authentification JWT (`MAIL_VAULT_MOUNT`) et un rôle (`MAIL_VAULT_ROLE`) dont la politique ne lit que `secret/data/creds/<login>`, champ `password`.
 - **État** : Aucun : le mot de passe de la boîte est obtenu du coffre à chaque appel (cache mémoire), rien n'est écrit sur disque.
 
 | Outil | Rôle |
 |---|---|
 | `courrier_alias_creer` | Crée un alias jetable `<nom_local>@<domaine>` vers la boîte de l'appelant (anti-spam : un alias par marchand, à supprimer au premier abus via courrier_alias_supprimer). |
 | `courrier_alias_liste` | Liste les alias jetables qui pointent vers la boîte @<domaine familial> de l'appelant. |
-| `courrier_alias_supprimer` | Supprime un alias jetable de l'appelant (le marchand a vendu l'adresse ? |
+| `courrier_alias_supprimer` | Supprime un alias jetable de l'appelant (le marchand a vendu l'adresse ? l'alias meurt, la boîte survit). |
 | `courrier_brouillon` | Dépose un BROUILLON dans la boîte @<domaine familial> de l'appelant — PAS dans Gmail (pour Gmail : `mail_draft` de l'addon `google`). |
 | `courrier_dossiers` | Liste les dossiers de la boîte PERSONNELLE @<domaine familial> de l'appelant, la messagerie de la maison (INBOX, Sent, Drafts…). |
 | `courrier_lire` | Lit un message complet (en-têtes + corps texte) par son `uid`, dans la boîte @<domaine familial> — pas Gmail. |
@@ -64,7 +65,7 @@ Proxy git smart-HTTP : les pods poussent du vrai git vers GitHub sans détenir d
 
 | Outil | Rôle |
 |---|---|
-| `git_remote` | L'URL de remote à donner à git pour pousser ce dépôt via le hub. |
+| `git_remote` | L'URL de remote à donner à git pour pousser ce dépôt via le hub (le credential helper `git-credential-rosetta` des pods, hors de ce dépôt, y joint le jeton). |
 
 ## github
 

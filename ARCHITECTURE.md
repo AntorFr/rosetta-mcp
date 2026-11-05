@@ -100,8 +100,8 @@ no-functional-change epic). Reversed if a documentation fix proves to need a man
 `AD-n`, rejections), `docs/addons.md` (per-addon reference), `docs/donnees.md`,
 `docs/parcours.md`, `docs/ecrans.md` (stating there is none); `docs/recommandations.md` is
 not written yet (the recommendations slice creates it).
-Language: English for `README.md` and `ARCHITECTURE.md`; `docs/addons.md` and `docs/donnees.md`
-are in French, as the tool descriptions and the code comments they quote. Rejected: one giant README (it is already
+Language: English for `README.md` and `ARCHITECTURE.md`; `docs/addons.md`
+is in French, as the tool descriptions it quotes; the other `docs/` pages are in English. Rejected: one giant README (it is already
 555 lines and wrong in places); a wiki (a pod reads only the repo).
 
 ### AD-3 — `.agent/status.md` is retired
