@@ -33,6 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "pytest-cov>=5",
     "ruff>=0.6",
 ]
 
@@ -56,3 +57,11 @@ select = ["E", "F", "W", "I", "B"]
 "tests/test_meteo.py" = ["E731"]      # throwaway lambda helper in a fixture builder
 "tests/test_trace.py" = ["B905"]      # zip() of two equal-length lists; strict= would be new behaviour in a test
 "tests/test_verbatim.py" = ["E741"]   # short loop variable `l` in test comprehensions
+
+[tool.coverage.run]
+source = ["src/rosetta"]
+
+[tool.coverage.report]
+# Floor = measured total on the full suite (85.23%, 382 tests), rounded down, measured 2026-11-05.
+# It follows the measure: raise it when coverage rises, never invent a target.
+fail_under = 85
