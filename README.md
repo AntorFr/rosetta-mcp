@@ -17,7 +17,8 @@ module and nothing else - no new pod, no key sprayed into agent environments.
 
 Where to go next: [`ARCHITECTURE.md`](ARCHITECTURE.md) for the map of the code and its
 invariants; `docs/addons.md` for each addon; `docs/donnees.md` for the files the
-hub writes; `docs/parcours.md` and `docs/ecrans.md` for the user journeys.
+hub writes; `docs/parcours.md` and `docs/ecrans.md` for the user journeys; `docs/recommandations.md` for the
+improvements that would change behaviour, written as options for the operator to decide (none applied).
 
 ## Addons
 

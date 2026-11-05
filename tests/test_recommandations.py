@@ -9,6 +9,7 @@ SUJETS = {  # id -> mot-clé du sujet attendu dans le titre
     "R-1": "User-Agent", "R-2": "quotas", "R-3": "yt-dlp", "R-4": "digest",
     "R-5": "Actions", "R-6": "mypy", "R-7": "google.py",
 }
+RELEVES = {"R-8", "R-9", "R-10", "R-11"}  # relevés des tranches précédentes, après les sept
 COUT = {"S": 0, "M": 1, "L": 2}
 
 
@@ -24,15 +25,17 @@ def _entrees():
 
 def test_les_sept_sujets_ont_une_entree_et_une_ligne_de_table():
     entrees, toc = _entrees(), _toc()
-    assert set(entrees) == set(SUJETS) == {r[0] for r in toc}
+    assert set(entrees) == set(SUJETS) | RELEVES == {r[0] for r in toc}
     for rid, mot in SUJETS.items():
         assert mot in entrees[rid][0], rid
+    assert list(entrees)[:7] == list(SUJETS)  # les sept d'abord, jamais réordonnés
 
 
 def test_table_et_entrees_rangees_par_classe_croissante():
     ids = [r[0] for r in _toc()]
     classes = [COUT[r[2]] for r in _toc()]
-    assert classes == sorted(classes)
+    assert classes[:7] == sorted(classes[:7])  # deux groupes, chacun du moins au plus coûteux
+    assert classes[7:] == sorted(classes[7:])
     assert ids == list(_entrees())  # même ordre dans le corps
 
 
