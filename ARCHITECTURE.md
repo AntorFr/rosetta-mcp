@@ -259,7 +259,7 @@ import, a bare `raise` chained with `from`), or **ignored one by one** (`ignore`
 `per-file-ignores`) with a comment giving the reason; a whole rule is never removed from the
 set to silence it. A fix that would change behaviour (a default argument, a caught
 exception type, an output string) is not made: it is ignored with its reason and the case
-is carried to `docs/recommandations.md` (to be created by the recommendations slice, AD-7). `ruff format`
+is carried to `docs/recommandations.md` (AD-7). `ruff format`
 is not run: reformatting the code base would bury the diffs of the cleanup slice. `E501` stays
 selected; if the audit shows long lines, `line-length` is raised once, with a comment
 giving the measured longest line, rather than ignoring the rule. `ruff` joins the `dev` extra.
