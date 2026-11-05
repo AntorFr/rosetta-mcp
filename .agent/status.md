@@ -2,6 +2,14 @@
 
 > MàJ : 2026-11-05
 
+**Epic `rosetta-qualite`, feature `rosetta-qualite-outillage` (2026-11-05, ÉCRIT, PAS FUSIONNÉ)** :
+`ruff check .` propre (jeu `E, F, W, I, B`, `line-length` 178 = plus longue ligne mesurée, 3 `per-file-ignores`
+commentés sur des tests : E731, B905, E741) ; corrections sans effet de comportement (imports, `raise … from`,
+lambda → `def`, variable `l` → `ln`), aucune assertion de test modifiée, `surface.json` inchangé.
+Couverture : `fail_under = 85` (mesuré 85,23 %, 382 tests). Le job `test` de `docker-publish.yml` lance
+`ruff check .` puis `pytest --cov --cov-report=term-missing` avant `build`. Reste : mypy, épinglage des Actions
+(AD-7), nettoyage. Piège : le plancher suit la mesure, on le monte, on ne le baisse pas. Décisions : AD-outillage-1/2.
+
 **Epic `rosetta-qualite`, feature `rosetta-qualite-filet` (2026-11-05, ÉCRIT, PAS FUSIONNÉ dans `main`)** :
 le filet avant tout nettoyage. Rien dans `src/` n'a changé (v0.29.0). Ajouts, tous sous `tests/` :
 `test_surface.py` compare la surface construite depuis le code (outils : nom, docstring, schéma d'entrée ;
