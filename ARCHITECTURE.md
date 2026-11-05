@@ -83,3 +83,32 @@ visible change the operator owns.
 
 - Rewriting addons for style: risk without benefit, contradicts I-4.
 - Adding features found missing during the cleanup: out of scope, go to recommendations.
+
+### AD-outillage-1 — The ruff configuration: a fixed rule set, no wholesale reformatting
+`[tool.ruff]` in `pyproject.toml` targets `py312` and selects at least `E, F, W, I, B`
+(the ruff default is poorer; an empty selection would make "lint clean" trivial). A finding
+is either **fixed** by a change that leaves behaviour untouched (import order, unused
+import, a bare `raise` chained with `from`), or **ignored one by one** (`ignore` or
+`per-file-ignores`) with a comment giving the reason; a whole rule is never removed from the
+set to silence it. A fix that would change behaviour (a default argument, a caught
+exception type, an output string) is not made: it is ignored with its reason and the case
+is carried to `docs/recommandations.md` by the recommendations slice (AD-7). `ruff format`
+is not run: reformatting the code base would bury the diffs of the cleanup slice. `E501` stays
+selected; if the audit shows long lines, `line-length` is raised once, with a comment
+giving the measured longest line, rather than ignoring the rule. `ruff` joins the `dev` extra.
+Rejected: `select = ["ALL"]` (a lint project of its own); adding `ruff format --check` to CI
+(not asked by B-7).
+
+### AD-outillage-2 — Coverage floor measured, then enforced in the existing `test` job
+`pytest-cov` joins the `dev` extra; `[tool.coverage.run]` has `source = ["src/rosetta"]`
+and `[tool.coverage.report]` has `fail_under` set to the **measured total, rounded down
+to the integer**, on the full suite (characterisation test and `transit` tests included),
+with a comment giving the measured value and date. No target is invented: raising the
+floor later is a decision, lowering it is a regression. CI: the workflow keeps its single
+`test` job (on which `build` already `needs`); its steps become `pip install -e .[dev]`,
+`ruff check .`, `pytest --cov` (the terminal report with missing lines). The commands are
+exactly these, so that the README (documentation slice) can quote them. Pull requests already
+trigger the workflow (`pull_request: branches: [main]`) and keep doing so. The Actions
+keep their tags (AD-7); the workflow is checked by its YAML syntax and its job graph, not
+played on the forge.
+
