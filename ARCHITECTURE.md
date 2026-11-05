@@ -1,8 +1,10 @@
 # Rosetta — architecture
 
-Status of this file: **target for the `rosetta-qualite` epic**. The *Organs* section
-describes the code as it is (audited at v0.29.0); `AD-n` entries are decisions, the
-first ones taken by the quality epic. Later tranches complete it from the code.
+Status of this file: the *Organs*, *Security* and *Deployment* sections describe the code
+as it is after the `rosetta-qualite` cleanup (v0.29.0); `AD-n` entries are decisions, the
+first ones taken by the quality epic; the `AD-doc-n` of *Durable decisions from the
+logbook* are the choices that the retired `.agent/status.md` taught and the code still
+shows.
 
 ## Invariants
 
@@ -14,22 +16,76 @@ first ones taken by the quality epic. Later tranches complete it from the code.
 
 ## Organs
 
+Every module of `src/rosetta/` outside the addons, then the addon contract and its helpers.
+
+- `src/rosetta/__init__.py` — the package docstring and `__version__`, read from the
+  installed distribution metadata (`importlib.metadata`, distribution `rosetta-mcp`) so
+  that `pyproject.toml` is the single source; `0+unknown` when the package is not
+  installed. `/health` and `/` report this value.
 - `src/rosetta/main.py` — addon discovery (`pkgutil`, `ROSETTA_ADDONS` allowlist,
-  `_`-prefixed modules are helpers), state `ok`/`degraded`/`error`/`disabled`, ASGI app
-  assembly (Starlette `Mount` per addon, `/health`, `/`, RFC 9728 metadata), per-addon
-  session manager lifespan. The app is built at import (`app = create_app()`).
-- `src/rosetta/auth.py` — `BearerJWTMiddleware`: OIDC JWT validation (issuer, audience
-  global or `<audience>/<addon>`, trusted issuers), `identity = "user"` enforcement,
-  open paths, anonymous catalogue window (`initialize`/`ping`/`tools/list`).
-- `src/rosetta/addons/<name>.py` — one FastMCP server per addon; contract: `mcp`,
-  optional `required_env`, `identity`, `extra_routes`, `open_paths`.
-- `src/rosetta/addons/_common.py` — shared helpers: server factory, `http_client(transport, …)`,
-  `current_subject`/`remote_user`, per-subject store `read_user`/`write_user`, signed OAuth
-  `state` (`state_key`/`sign_state`/`verify_state`/`state_codec`), identity bridge.
-- Persistence: per-subject files, see `docs/donnees.md`.
-- Deployment: multi-stage `Dockerfile`, non-root, port 8200, `HEALTHCHECK /health`;
-  image `ghcr.io/antorfr/rosetta-mcp` published by `.github/workflows/docker-publish.yml`;
-  manifests live in `AntorFr/k8s-home-lab` (not touched here).
+  `_`-prefixed modules are helpers; each module is imported or reloaded, so a second
+  `create_app()` gets fresh FastMCP instances), state `ok`/`degraded`/`error`/`disabled`
+  (`degraded` = a name of the addon's `required_env` is unset), ASGI app assembly
+  (Starlette `Mount` per addon at `/<name>`, the addon's `extra_routes` registered before
+  the mount, `/health`, `/`, the two RFC 9728 documents), per-addon session manager
+  lifespan (a start failure downgrades that addon to `error`). It tells the auth
+  config which prefixes are user-only or open, then wraps the app in
+  `BearerJWTMiddleware`. The app is built at import (`app = create_app()`).
+- `src/rosetta/auth.py` — `AuthConfig` (read from `ROSETTA_AUTH`, `ROSETTA_ISSUER`,
+  `ROSETTA_EXTERNAL_URL`, `ROSETTA_AUDIENCE`, `ROSETTA_JWKS_URI`, `ROSETTA_TRUSTED_ISSUERS`),
+  `BearerJWTMiddleware` (OIDC JWT validation: signature against the JWKS of the issuer the
+  token claims if it is trusted, `iss`, `aud` global or `<audience>/<addon>`, `exp`/`iat`
+  required; `identity = "user"` enforcement; open paths; the anonymous catalogue window),
+  `token_from_header` (Bearer, or the password of a Basic header), the `current_claims` and
+  `current_token` context variables addons read, and `protected_resource_metadata`
+  (RFC 9728).
+- `src/rosetta/addons/__init__.py` — the package marker and docstring only: one module =
+  one MCP server mounted under `/<module-name>`; `_`-prefixed modules are never mounted.
+- `src/rosetta/addons/<name>.py` — one FastMCP server per addon; contract (documented in the
+  `main.py` docstring): `mcp`, optional `required_env`, `identity`, `extra_routes`,
+  `open_paths`. The per-addon reference is `docs/addons.md`.
+- `src/rosetta/addons/_common.py` — helpers shared by addons, never mounted:
+  `new_server` (FastMCP for hub mounting: stateless streamable HTTP at the mount root, SDK
+  DNS-rebinding protection off since the hub's JWT layer protects), `http_client(transport, …)`,
+  `current_subject`/`remote_user` (the store key from the token claims / from the ingress
+  `Remote-User` header, both NFC-normalised so they match), the identity bridge
+  (`bridge_learn`/`bridge_resolve`), `enrol_page` (the card shown by enrolment routes),
+  `dig` (tolerant nested lookup), per-subject store `read_user`/`write_user` (atomic,
+  mode 600), signed OAuth `state` (`state_key`/`sign_state`/`verify_state`/`state_codec`).
+- Persistence: per-subject files, see `docs/donnees.md`. The hub itself keeps no state.
+
+### Security
+
+- **Authentication**: the hub is an OAuth 2.1 resource server. Everything but `/health` and
+  `/.well-known/*` (and the `open_paths` of addons, guarded by the ingress forwardAuth
+  instead) needs a valid JWT: algorithms `RS256`, `PS256`, `ES256`, `EdDSA`; issuer in
+  `ROSETTA_ISSUER` or `ROSETTA_TRUSTED_ISSUERS`; audience `ROSETTA_AUDIENCE` (default the
+  external URL), or `<audience>/<addon>` on that addon's mount only. Keys are fetched lazily
+  per issuer, so the hub boots when an IdP is down. `ROSETTA_ISSUER` and
+  `ROSETTA_EXTERNAL_URL` have no default (the repository is public). `ROSETTA_AUTH=off`
+  disables the layer, for local development only.
+- **Identity classes**: a subject starting `oauth2:client:` is a machine; an addon with
+  `identity = "user"` answers 403 to it. Machine tokens are the default class.
+- **Failures**: 401 carries `WWW-Authenticate` pointing at the RFC 9728 metadata, except
+  under `/git/` where it is `Basic realm="rosetta"` (see AD-doc-4).
+- **Secrets**: provider keys come from the environment (`required_env`), user credentials
+  from per-subject files created mode 600, written atomically; none is returned in a tool
+  answer (I-1).
+- **Network**: no TLS here, the ingress terminates it; the container listens on 8200.
+
+### Deployment
+
+- Multi-stage `Dockerfile`: a `python:3.12-slim` build stage installs the package into a
+  virtualenv (`/opt/venv`) from `pyproject.toml` and `src`; the runtime stage copies only the
+  venv, runs as non-root user `rosetta` (uid 1000), exposes 8200, and starts
+  `uvicorn rosetta.main:app --host 0.0.0.0 --port 8200`.
+- `HEALTHCHECK` GETs `/health` on 127.0.0.1:8200 (unauthenticated by design, also the
+  Kubernetes probe) and requires status 200; a degraded addon still gives 200.
+- Image `ghcr.io/antorfr/rosetta-mcp` published by `.github/workflows/docker-publish.yml`
+  (lint and tests gate the build, AD-outillage-2); manifests live in `AntorFr/k8s-home-lab`
+  (not touched here, AD-1).
+- Single replica: the rotating refresh tokens of `github` and `withings`, the sliding
+  windows of `food` and `postier` are in-process state (AD-doc-18).
 
 ## Decisions
 
@@ -227,3 +283,174 @@ module it concerns. The task review lists every logbook passage as retained (wit
 `AD-doc-n`) or abandoned (with a few words of reason), so the cut can be audited. Then
 `.agent/status.md` is deleted (AD-3). Rejected: keeping it under `docs/` (AD-3); carrying
 every passage over (it would reproduce the logbook).
+
+## Durable decisions from the logbook
+
+Distilled from `.agent/status.md` (retired, AD-3; it stays in git history). Each entry names
+the module it concerns and was re-checked against the code; the cut rule is AD-doc-2.
+
+### AD-doc-3 — `auth`: the anonymous catalogue window is narrow and fails closed
+The middleware serves without a token exactly four JSON-RPC methods (`initialize`,
+`notifications/initialized`, `ping`, `tools/list`), so that a policy gateway's catalogue
+observer, which deliberately holds no hub credential, can watch the tool surface. Every edge
+falls back to the 401: `POST` only (the SSE `GET` stays authenticated), mount roots only (one
+path segment, so the two-segment routes of `/git/` never match), one well-formed JSON-RPC
+object (a batch is refused even when every element is listed; unreadable or over 64 KiB bodies
+too), and only when **no** token is presented — an invalid token stays 401. The context
+variables stay unset on that path. Accepted risk: tool names and schemas are readable
+without a token, on an internal network. Rejected: passive listening (alert too late) and a
+dedicated endpoint (code on both sides). The observer must post to the mount (`/<addon>/`),
+the hub root has no MCP endpoint.
+
+### AD-doc-4 — `auth`: git gets a Basic envelope and a Basic challenge, nobody else
+git cannot send a Bearer header and, faced with a `Bearer` challenge, gives up without asking
+its credential helper. `token_from_header` therefore also accepts a Basic header and takes
+its password as the token (the token is validated exactly like a Bearer one), and a 401 under
+`/git/` answers `Basic realm="rosetta"`. Everywhere else the challenge still points at the
+RFC 9728 metadata, so no browser is invited to prompt on an MCP endpoint.
+
+### AD-doc-5 — `auth`: two audiences, and a trusted issuer is not an advertised one
+A token is accepted with the hub audience everywhere, or with `<audience>/<addon>` on that
+addon's mount only: a token that names its addon is held to it, one that names only the hub
+works as before. A second issuer from `ROSETTA_TRUSTED_ISSUERS` (delegation tokens signed by
+the policy gateway, `EdDSA`) is trusted for validation and never advertised in the RFC 9728
+document: pointing a client at a server where it cannot obtain a token is worse than silence.
+The unverified `iss` is read only to select the key set; the signature decides.
+
+### AD-doc-6 — `_common`: the store is keyed on the username, and three forms are normalised
+A per-subject store is keyed on `preferred_username` (the only identity the ingress
+`Remote-User` gives enrolment), falling back on `sub`; `remote_user` recovers the UTF-8 that
+arrives as latin-1 and both go through NFC, because one byte of difference files a credential
+under a key no call will match. A delegation token carries only the opaque `sub`: the identity
+bridge (`identity_bridge.json`, learnt from any verified token carrying both claims, last write
+wins, self-repairing after an IdP storage reset) maps it back. Only `google` is wired to the
+bridge. Rejected: keying the store on `sub` (enrolment cannot know it).
+
+### AD-doc-7 — `google`: drafts first; send and delete exist because a gateway arbitrates
+Until v0.27 "no sending, no deletion" was structural (no tool). It is now policy: a gateway
+in front of the hub decides who may call `mail_send` and `calendar_delete`, on which channel,
+after which confirmation. `mail_send` sends a reviewed draft by `draft_id` (the preferred
+circuit; the answer reports the recipient re-read from the draft) or composes directly through
+the same `_compose` as `mail_draft`, so that drafting and sending cannot fork. Recipient and
+text stay chosen by the caller: `mail_send`, like an invitation, is an exfiltration path, said
+so in the code. No new scope (`gmail.compose` already covered it). `calendar_delete` reports
+an already-deleted event (410) as a state, not a failure. `send_updates` defaults to
+`externalOnly`.
+
+### AD-doc-8 — `google`: a truncation must be visible, measurable and recoverable
+A cut text states both sizes and names the parameter that raises the limit
+(`mail_thread(body_limit=…)`, bounded rather than refused, with a total budget that shrinks
+the last messages and never empties one); an opaque cap made an agent guess a threshold and
+report a fault. Likewise calendar tools take `calendar_id` (several, or `*`, bounded fan-out),
+every event returns the calendar it comes from (`calendar_update` needs it), a failing calendar
+is named instead of looking like an empty day, and ids are `quote()`d. Listing calendars needs
+its own scope: an older enrolment is told to re-enrol, not given a bare 403.
+
+### AD-doc-9 — `courrier`: the vault arbitrates, drafts only, the box is named
+The addon holds no mailbox password: it exchanges the caller's bearer (`current_token`) for a
+vault token whose templated policy opens only that caller's credential; the vault decides, not
+the addon code. It only searches, reads and drafts (never sends; sending is `postier`'s). Its
+tool descriptions name the mailbox they open and say it is not Gmail (and `google` says the
+reverse), because two similarly named mail toolsets let an agent report the wrong one as
+broken. Rejected: renaming the `MAIL_*` variables (server config, no gain, rollout risk).
+
+### AD-doc-10 — `postier`: the only machine sender is boxed in
+Class machine; sender frozen to `POSTIER_FROM`; every recipient must match `POSTIER_ALLOWED`
+(no default); a sliding-window hourly quota in process memory; a failed copy to *Sent* is
+reported as information, never as a lie about the send.
+
+### AD-doc-11 — `git`: the proxy lets the server judge ancestry, through a scratch ref
+The wire protocol carries no force flag and GitHub accepts a force-push on an unprotected
+branch, so relaying the pack would protect nothing. A branch update is streamed to a throwaway
+ref `refs/heads/rosetta-scratch/<hex>` (which makes the objects exist), then the real ref is
+moved by the API with `force: false`, which GitHub refuses natively if it is not a
+fast-forward; the scratch ref is deleted in a `finally`. Asking GitHub to compare before the
+push was rejected: the pushed commit does not exist yet (404), which refused every update.
+Also refused: ref deletion, refs outside `refs/heads/*` and `refs/tags/*`, moving an existing
+tag, a push touching several refs, a compressed `receive-pack` body. Only the pkt-line command
+prefix is buffered, the pack streams. Upstream, the credential travels as Basic
+`x-access-token:<token>` (github.com's smart-HTTP does not accept Bearer). A refusal is an
+`ng` report-status line, not an HTTP 403, which git would hide under side-band. Whether a push
+*should* happen is the caller's judgement, not the proxy's.
+
+### AD-doc-12 — `github`: a bounded write surface, locked by a test, credential never leaves the hub
+Class user, one credential per subject, never shown to the pod, so a shell cannot bypass the
+guard. Writes are individually admitted and the absent ones are the guarantee (no deletion of
+repositories or branches, no force-push, no secrets or settings): a test pins the tool count
+and a list of forbidden words, so an out-of-contract tool breaks the suite. `repo_commit` is
+one atomic commit through the Git Data API (`contenu: null` deletes); `repo_create` makes a
+new private, empty repository named strictly; `issue_comment` writes without echoing third-party
+text and refuses a pull request or a locked issue, so it is not a back door to PR comments; a
+pull request merge sends the head sha re-read just before (a moving branch gives 409), re-reads
+`mergeable` when GitHub has not computed it yet and says so if it stays `null`, and never
+deletes the branch. Titles, bodies and authors of pull requests are third-party text: data to
+report, never instructions. A 403 names the missing permission.
+
+### AD-doc-13 — `meteo`: one upstream call per model
+A grouped Open-Meteo request drops an out-of-domain model silently and suffixes keys by the
+number of survivors, so a naive parser attributes values to the wrong model. One call per
+model makes both impossible (the key is always bare, an absence is reported). Null rows past a
+model's horizon are dropped, never read as calm; `timezone=auto` gives the spot's local time;
+directions average circularly. Free text is geocoded by a commune-only geocoder, hence the
+registry first (`ROSETTA_WIND_SPOTS`) and a warning, region and altitude on any guessed place.
+No quota helper: the allowance is forty times that of Open Food Facts. Rejected: a grouped
+call (cheaper, wrong).
+
+### AD-doc-14 — `marees`: a narrow scope, and refusal over extrapolation
+Only times and coefficient. The coefficient is computed for Brest and is the same everywhere;
+times vary by port, so answers carry one coefficient per tide and times per port. A date
+outside J±30 is refused, a port beyond 100 km is refused (and flagged past 25 km), the source's
+attribution (CC BY) and its "unofficial" status are in every answer. The paid official service
+was rejected on purpose, not for lack of looking. Places resolve against the known ports first,
+then the IGN geocoder (no third key).
+
+### AD-doc-15 — `maps`: the wind comes from the API's own fields, gaps are omitted
+Direction is a French cardinal derived from degrees, not a translation of the enum; the hourly
+forecast stops at 24 h (the API page size) rather than paginating; a missing scalar is read as
+absent or zero according to the proto3 JSON rule (midnight arrives without its `hours` key) and
+an unforecast gust is omitted, never 0 km/h. `maps` has a `_transport` hook since it was the
+only addon without tests.
+
+### AD-doc-16 — `trace`: geometry never goes through the model
+`trace_calcule` returns figures and a URL; `GET /trace/geometrie` returns the polyline, which
+the caller writes straight to disk (a few hundred tokens instead of thousands, twice). The
+route is stateless — the URL carries the parameters and the track is recomputed — rather than a
+cache that would need a lifetime, a size and a replica count. BRouter takes `lon,lat` (the
+reverse of the rest of the hub), flipped in a single function; ascent is filtered with a 5 m
+hysteresis, one method both ways; Overpass is capped per type, not globally; a waypoint
+anchors on the nearest vertex searching forward only (on a loop the last point is the first).
+`altimetrie="ign"` is an option, not the default.
+
+### AD-doc-17 — `food` and `verbatim`: read-only, and the source is said
+`food` is read-only on purpose (the database is editable by anyone): an agent cannot publish
+in a public base. `fields=` is mandatory (a projection shrinks the answer a hundredfold) and
+re-renders allergens in English, so the `_tags` are requested and translated here; an absent
+product is an answer (`trouve: false`), not a failure; a process-wide `_Quota` queues calls
+because the upstream bans the shared egress IP. `verbatim` does no speech recognition: it
+fetches published subtitles (json3, then vtt, then srt; a HLS playlist is followed), stitches
+them into timed sentences, and returns an empty answer saying so when there are none; `origine`
+(`manuel`/`auto`) is in every answer since quoting a machine transcript as the author's words
+is a false quote. Rejected: an off-the-shelf stdio MCP for Open Food Facts (the transport this
+hub replaces, unbounded surface).
+
+### AD-doc-18 — `withings`, `github`, `quotas`: rotating refresh tokens force a single replica
+These addons file a credential that rotates at each refresh: `github` stores the new refresh
+token it receives, `withings` and `quotas` also write it atomically before use and refresh
+under a per-subject lock; two replicas would burn each other's token.
+The lock key is derived the same way as the file name (`_key()` in `quotas`), because one
+subject has two spellings (`Sébastien` from a user call, `S_bastien` read back from the file
+name) and two locks would stop serialising where both kinds of caller meet. `withings` reads
+the real status in the body (every answer is HTTP 200) and keeps measures in `Decimal`
+(`value × 10^unit`). The deployment stays at one replica.
+
+### AD-doc-19 — `quotas`: undocumented upstream, read open to machines, enrolment never
+There is no public API for a consumer subscription's counters; the addon calls the endpoint
+Claude Code's own `/usage` uses, which may change without notice, so it reads the
+self-describing `limits[]` array and says "format changed" instead of returning an empty
+object; a rate-limited read returns the last figures with their age. Only a credential from a
+real login carries the needed scope (a long-lived setup token is refused, 403), so enrolment
+takes the refresh token of a login made in a throwaway config directory. Tools sit behind the
+JWT (machine tokens included, for supervision pods), `/quotas/enroll` behind the ingress SSO:
+no token holder can enrol or replace a credential, and the credential appears in no answer.
+Machine calls read the counters of `ROSETTA_QUOTAS_OWNER`; several enrolled users without an
+owner is an error, never a guess.
