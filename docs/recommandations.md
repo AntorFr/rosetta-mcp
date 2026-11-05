@@ -15,10 +15,6 @@ Cost classes (AD-recommandations-1): **S** a text, config or pin change, no code
 | R-5 | Actions pinned by tag | S | B — pin each Action to a commit SHA, keep the tag in a comment |
 | R-6 | mypy | M | B — add mypy in CI with a baseline of the current errors |
 | R-7 | Splitting `google.py` and the other large modules | L | B — split `google.py` only, in its own slice |
-| R-8 | `google` and `github` write their credential file in place, not atomically | M | B — write through `write_user` (temporary file, then `os.replace`) |
-| R-9 | `github` OAuth `state` has its own format and key | M | A — leave as is, unify only with a planned re-enrolment window |
-| R-10 | `google._current_sub` kept apart from `current_subject` | M | A — leave as is, it is not a copy |
-| R-11 | Five different fallbacks for the house time zone | M | B — one `house_tz()` helper, after the operator has chosen the fallback |
 
 ## R-1 — Personal contacts in default User-Agents
 
@@ -125,64 +121,5 @@ Cost classes (AD-recommandations-1): **S** a text, config or pin change, no code
 - D. Only extract the enrolment page (about 80 lines to the end of the file) into a private module. Cost: M; effect: small gain, no change of the import path of the tools.
 
 **Recommendation.** B, in its own slice, because tests patch module attributes and the split cannot be done without changing how they reach them (a decision for the tester, since existing tests may not be edited by the author). D is the cheap step if the operator wants to start smaller. C is not recommended: nothing in the other modules asks for it.
-
-**Status.** `open`
-
-## R-8 — `google` and `github` write their credential file in place
-
-**Finding.** `withings` and `quotas` write their per-subject file through `write_user` (`src/rosetta/addons/_common.py:209-218`: temporary file, `chmod 600`, `os.replace`). `google` and `github` do not (AD-nettoyage-2, "per-file store", left un-extracted): `google.py:1355-1363` (enrolment callback) and `github.py:157-159` (rotation of the refresh token on each refresh) and `github.py:821-825` (enrolment) open the final path with `"w"`, `json.dump`, then `os.chmod(path, 0o600)`. The file is therefore truncated before it is rewritten, and for a moment it has the default mode of the process rather than 0600.
-
-**Why it matters.** GitHub rotates the refresh token at every use (AD-doc-18): a crash or a kill between the truncation and the end of the dump leaves an empty file and the user must enrol again. The window is short, but it is the one case where the file is the only copy of a secret that cannot be re-read from upstream. The brief mode window is a minor point, on a data volume only the process reads.
-
-**Options.**
-- A. Leave as is. Cost: none. Effect: unchanged; the risk stays a rare one.
-- B. Write through `write_user(path, record)` in `github` (refresh and enrolment) and in `google` (enrolment). Cost: M (three call sites, no change of format: `write_user` makes the same `json.dump` bytes and mode 0600, checked by the `nettoyage-magasin` review; `google` and `github` read the file in their own way, which does not change). Effect: no visible change; a crash leaves the old or the new file.
-- C. B plus one shared reader (`read_user`) for all four addons. Cost: M-L (the readers differ in what they do on a corrupt file and in the default value, so each one needs its own characterisation first). Effect: one store; larger diff.
-
-**Recommendation.** B, with the existing tests: nothing the tools return changes. C only if the operator wants the readers unified as well; it is not needed for the risk above.
-
-**Status.** `open`
-
-## R-9 — `github` OAuth `state` has its own format and key
-
-**Finding.** `google` and `withings` sign the OAuth `state` through `_common.state_codec` (`expiry.sub.sig`, full hexdigest, key in `state.key`; `google.py:1298`, `withings.py:726`). `github` keeps its own (AD-nettoyage-2, "signed OAuth state", left un-extracted): `github.py:747-770` builds `sub|ts|sig` in base64, with a digest truncated to 32 characters and a key derived from the OAuth client secret (`_state_key`, `github.py:747-750`, falling back on the constant `"rosetta-github"` when no client is configured).
-
-**Why it matters.** Two formats and two key sources for the same job. The GitHub key depends on the client secret, so rotating the secret invalidates the states in flight (a ten-minute window), and with no client configured the key is a constant public in the repository (the state then proves nothing, but enrolment needs the client anyway). Unifying would invalidate every state in flight at the moment of the deploy, which is a visible change; that is why it was not done in the cleanup.
-
-**Options.**
-- A. Leave as is. Cost: none. Effect: unchanged.
-- B. Move `github` to `state_codec`. Cost: M (one line to wire, plus a check that the tests which call `_sign_state` / `_verify_state` of `github` still reach them: they are existing tests, to be reviewed by the tester). Effect: enrolments started before the deploy and ended after it fail once ("state invalide"), the user restarts from `/github/enroll`; the key now lives in `state.key` and no longer follows the client secret.
-- C. B, deployed with a short-lived acceptance of the old format. Cost: M-L (a second verifier to write and remove later). Effect: no failed enrolment; more code for ten minutes of benefit.
-
-**Recommendation.** A. The two formats work; the only gain from B is uniformity and the cost is a failed enrolment at the deploy. If the operator does want one codec, B at a moment when nobody is enrolling.
-
-**Status.** `open`
-
-## R-10 — `google._current_sub` kept apart from `current_subject`
-
-**Finding.** `github`, `quotas` and `withings` read the caller from `_common.current_subject`. `google` keeps its own `_current_sub` (`google.py:141-165`; AD-nettoyage-2, "current subject", left un-extracted; the arbitration of `rosetta-qualite-nettoyage-sujet` recorded it): it prefers `preferred_username` (NFC-normalised), teaches the identity bridge (`bridge_learn`), then falls back on the bare `sub` if a file exists under it, then on what the bridge resolved, then on the bare `sub`.
-
-**Why it matters.** A reader sees four versions of "who is calling" and has to know why one differs. The difference is real (the bridge, AD-doc-6): it is not duplicated code but a different rule, so the cost is one of reading, not of correctness. The risk of sharing is on the other side: a parameter that reproduces the bridge inside `_common` makes the common helper depend on `google`'s file layout.
-
-**Options.**
-- A. Leave as is, with its reason in `docs/addons.md` or a comment above the function. Cost: S-M (a comment; no code change). Effect: none.
-- B. `current_subject(…, resolver=…)` in `_common`, with `google` passing its bridge rule. Cost: M (the existing tests of the bridge and of `google` must pass without edits; the order of `bridge_learn` before the file test is observable). Effect: one entry point, a callback with `google`'s whole rule in it, hence little gain.
-
-**Recommendation.** A: it is not a copy. Revisit only if a fifth addon needs the bridge.
-
-**Status.** `open`
-
-## R-11 — Five different fallbacks for the house time zone
-
-**Finding.** Every addon that needs the house zone reads `TZ` and falls back on its own: `google.py:858` `os.environ.get("TZ", DEFAULT_TZ)` (an empty `TZ` stays empty and is sent as `timeZone: ""`); `marees.py:331` the same with a literal `"Europe/Paris"`; `meteo.py:114` `TZ or "Europe/Paris"` (empty gives Paris, an unknown name is passed on as a string); `quotas.py:404-406` `ZoneInfo(TZ or DEFAULT_TZ)` (an invalid name gives Paris); `withings.py:363-371` `TZ`, then `DEFAULT_TZ`, then UTC (AD-nettoyage-2, "time zone and paging", left un-extracted; the `nettoyage-sujet` review listed the five). `DEFAULT_TZ = "Europe/Paris"` is declared three times (`google.py:99`, `quotas.py:137`, `withings.py:78`). No paging helper is duplicated, so that part of the family needs no entry.
-
-**Why it matters.** With `TZ` unset or valid nothing differs. The differences show with an empty or an invalid `TZ`: `google` and `marees` send an empty zone to their upstream, `withings` answers in UTC, `quotas` and `meteo` in Paris. A deployment with a typo in `TZ` gets different, partly wrong, results per addon.
-
-**Options.**
-- A. Leave as is. Cost: none. Effect: unchanged; the case needs a misconfiguration.
-- B. One `house_tz()` in `_common` (empty or unknown gives `Europe/Paris`, or UTC, as the operator chooses) used by the five. Cost: M (five call sites, tests of each addon to keep green; `withings` currently differs by ending on UTC, so the choice is made once and a test pins it). Effect: an empty or invalid `TZ` now gives the same zone everywhere, which changes the answer of `google`, `marees` and `withings` in that case only.
-- C. Validate `TZ` at start-up and refuse to start on an unknown name. Cost: M (code in `main`, and a test that boots with a bad `TZ`); effect: a misconfiguration is seen at deploy time; a deployment that has one stops.
-
-**Recommendation.** B, choosing Paris as the single fallback (it is the default the code already names in four places; UTC in `withings` only guards against a missing tz database, which `tzdata` in `pyproject.toml` now removes). Decision first, code after.
 
 **Status.** `open`
