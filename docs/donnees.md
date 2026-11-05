@@ -22,9 +22,10 @@ the same file; machine tokens are refused (403) on `identity = "user"` addons.
   character outside `[A-Za-z0-9_.-]` replaced by `_`, cut to 64 characters. The accents are
   therefore lost in the name; the real spelling is in the `sub` key of the record.
 - **Encoding**: one JSON object, written with `json.dump` (no indentation).
-- **Permissions**: file mode `0600`. `google`, `withings` and `quotas` write through
+- **Permissions**: file mode `0600`. `withings` and `quotas` write through
   `write_user` (`_common.py`): a `<file>.tmp` is written, chmod'ed, then `os.replace`d
-  (atomic). `github` writes the file directly (`open(..., "w")` then `chmod 600`), not atomically.
+  (atomic). `google` (enrolment callback) and `github` write the file directly
+  (`open(..., "w")` then `chmod 600`), not atomically.
 - **Keys**: all four records have `sub` (the subject, string), `refresh_token` (string) and
   `enrolled_at` (integer, epoch seconds) — in `quotas`, `refresh_token` and `enrolled_at` sit
   inside `providers.claude`. When a refresh rotates the token, `refreshed_at`
