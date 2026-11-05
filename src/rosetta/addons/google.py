@@ -472,45 +472,9 @@ async def mail_thread(thread_id: str, body_limit: int = THREAD_BODY_LIMIT) -> di
     return out
 
 
-@mcp.tool()
-async def mail_attachment(message_id: str, attachment_id: str | None = None,
-                          raw: bool = False) -> dict:
-    """Lit ou rapatrie les pièces jointes d'un mail Gmail.
-
-    - Sans `attachment_id` : liste les pièces jointes du message (nom, type, taille, id).
-    - Avec `attachment_id` (défaut) : rend la pièce en TEXTE quand c'est possible
-      (texte brut, CSV/JSON, PDF) — pour la LIRE. Un binaire opaque (image, archive)
-      ne renvoie que ses métadonnées, jamais les octets bruts.
-    - Avec `raw=True` : rapatrie la pièce au FORMAT NATIF (octets en base64), pour la
-      STOCKER telle quelle (mémoire, pièce jointe d'une fiche). Plafonné en taille.
-
-    message_id : l'id du message (donné par mail_search).
-    attachment_id : l'id de la pièce (donné par ce même outil en mode liste).
-    raw : True pour récupérer les octets bruts au lieu d'une transcription texte.
-    """
-    auth = await _authed()
-    if isinstance(auth, dict):
-        return auth
-    _, headers = auth
-
-    async with _client() as http:
-        meta = await http.get(f"{GMAIL}/messages/{message_id}",
-                              params={"format": "full"}, headers=headers)
-        meta_data = meta.json()
-        if meta.status_code != 200:
-            return {"error": dig(meta_data, "error", "message", default=f"HTTP {meta.status_code}")}
-        attachments = _list_attachments(meta_data.get("payload") or {})
-
-        if not attachment_id:
-            return {"message_id": message_id, "attachments": attachments}
-
-        info = next((a for a in attachments if a["attachment_id"] == attachment_id), None)
-        r = await http.get(
-            f"{GMAIL}/messages/{message_id}/attachments/{attachment_id}", headers=headers)
-        data = r.json()
-    if r.status_code != 200:
-        return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
-
+def _attachment_out(data: dict, message_id: str, attachment_id: str, info: dict | None,
+                    raw: bool) -> dict:
+    """The tool's answer from the downloaded attachment: base64 bytes (raw) or text."""
     content = base64.urlsafe_b64decode(data["data"] + "=" * (-len(data["data"]) % 4))
     mime = (info or {}).get("mime_type") or ""
     filename = (info or {}).get("filename")
@@ -553,6 +517,48 @@ async def mail_attachment(message_id: str, attachment_id: str | None = None,
                        f"{filename or 'sans nom'}) — {len(content)} octets ; "
                        f"utiliser raw=True pour le rapatrier au format natif.")
     return out
+
+
+@mcp.tool()
+async def mail_attachment(message_id: str, attachment_id: str | None = None,
+                          raw: bool = False) -> dict:
+    """Lit ou rapatrie les pièces jointes d'un mail Gmail.
+
+    - Sans `attachment_id` : liste les pièces jointes du message (nom, type, taille, id).
+    - Avec `attachment_id` (défaut) : rend la pièce en TEXTE quand c'est possible
+      (texte brut, CSV/JSON, PDF) — pour la LIRE. Un binaire opaque (image, archive)
+      ne renvoie que ses métadonnées, jamais les octets bruts.
+    - Avec `raw=True` : rapatrie la pièce au FORMAT NATIF (octets en base64), pour la
+      STOCKER telle quelle (mémoire, pièce jointe d'une fiche). Plafonné en taille.
+
+    message_id : l'id du message (donné par mail_search).
+    attachment_id : l'id de la pièce (donné par ce même outil en mode liste).
+    raw : True pour récupérer les octets bruts au lieu d'une transcription texte.
+    """
+    auth = await _authed()
+    if isinstance(auth, dict):
+        return auth
+    _, headers = auth
+
+    async with _client() as http:
+        meta = await http.get(f"{GMAIL}/messages/{message_id}",
+                              params={"format": "full"}, headers=headers)
+        meta_data = meta.json()
+        if meta.status_code != 200:
+            return {"error": dig(meta_data, "error", "message", default=f"HTTP {meta.status_code}")}
+        attachments = _list_attachments(meta_data.get("payload") or {})
+
+        if not attachment_id:
+            return {"message_id": message_id, "attachments": attachments}
+
+        info = next((a for a in attachments if a["attachment_id"] == attachment_id), None)
+        r = await http.get(
+            f"{GMAIL}/messages/{message_id}/attachments/{attachment_id}", headers=headers)
+        data = r.json()
+    if r.status_code != 200:
+        return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+
+    return _attachment_out(data, message_id, attachment_id, info, raw)
 
 
 async def _compose(http, headers, body: str, to: str | None, subject: str | None,
