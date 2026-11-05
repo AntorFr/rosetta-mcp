@@ -7,20 +7,18 @@ its own path, behind a single OIDC bearer-token authentication layer.
 Like the stone: one endpoint, and every agent reads it in its own tongue.
 
 ```
-agent ──Bearer JWT──►  https://rosetta.example.com/maps/      (Google Maps, Places, Weather)
-                       https://rosetta.example.com/meteo/     (Open-Meteo, wind for sailing)
-                       https://rosetta.example.com/transit/   (SNCF + IDFM/Navitia)
-                       https://rosetta.example.com/trace/     (BRouter + Overpass, walks on OSM)
-                       https://rosetta.example.com/marees/    (tide times + coefficient, France)
-                       https://rosetta.example.com/quotas/   (what is left of a Claude subscription)
-                       https://rosetta.example.com/<addon>/   (drop a module in, it mounts)
+agent ──Bearer JWT──►  https://rosetta.example.com/<addon>/   (one path per addon, see below)
                        https://rosetta.example.com/health     (unauthenticated, per-addon state)
 ```
 
 Why a hub: provider API keys stay **server-side** (one deployment, one place to
-rotate), agents only ever hold an access token, and adding MCP #12 is a new
-module + nothing else - no new pod, no new image elsewhere, no key sprayed into
-agent environments.
+rotate), agents only ever hold an access token, and adding another MCP is a new
+module and nothing else - no new pod, no key sprayed into agent environments.
+
+Where to go next: [`ARCHITECTURE.md`](ARCHITECTURE.md) for the map of the code and its
+invariants; `docs/addons.md` for each addon; `docs/donnees.md` for the files the
+hub writes; `docs/parcours.md` and `docs/ecrans.md` for the user journeys; `docs/recommandations.md` for the
+improvements that would change behaviour, written as options for the operator to decide (none applied).
 
 ## Addons
 
@@ -31,9 +29,11 @@ from ._common import new_server
 
 mcp = new_server("name")          # FastMCP: stateless streamable HTTP at "/"
 required_env = ["SOME_API_KEY"]   # optional
+identity = "user"                 # optional: refuse machine tokens (403)
 ```
 
-The loader mounts each addon under `/<module-name>` and **isolates failures**:
+The loader mounts each addon under `/<module-name>` and **isolates failures**.
+The MCP endpoint is `/<name>/` (with the trailing slash; `/<name>` answers 307).
 
 | Addon state | Meaning |
 |---|---|
@@ -42,421 +42,31 @@ The loader mounts each addon under `/<module-name>` and **isolates failures**:
 | `error` | import/startup failed - addon skipped, **hub and other addons stay up** |
 | `disabled` | excluded by `ROSETTA_ADDONS` |
 
-Per-addon state is reported on `GET /health`. Modules starting with `_` are
-shared helpers, never mounted. Each addon also runs standalone over stdio for
-local debugging (`python -m rosetta.addons.maps`).
+Per-addon state is reported on `GET /health`. Modules starting with `_` are shared
+helpers, never mounted. Most addons also run standalone over stdio for local debugging
+(`python -m rosetta.addons.maps`); `courrier`, `git`, `github`, `postier`, `quotas` and `verbatim` do not (no `__main__` block).
 
-### User-data addons (`identity = "user"`)
+An addon with `identity = "user"` holds per-user credentials server-side, keyed on the
+caller's username; machine tokens are refused on its path. Its enrolment routes sit
+behind the ingress SSO instead of the hub JWT. Details: `docs/addons.md` and
+`docs/donnees.md`.
 
-An addon may declare `identity = "user"`: the hub then refuses machine tokens
-on its path (403) - the bearer token must carry a **human** subject. Tools read
-the caller's claims via a context variable, so a user-data addon keys its
-server-side credential store on the caller's identity: agents never hold the
-downstream credentials, only their own identity token. The store key is the
-**username** (`preferred_username`), because that is all the enrolment flow
-ever sees; a verified token carrying both the username and the IdP's opaque
-`sub` teaches a per-addon **identity bridge**, so a delegation token that only
-carries the subject still resolves the same credential - learned lazily, and
-relearned by itself after an IdP storage reset mints new identifiers. Such
-addons may also register plain HTTP routes (`extra_routes` / `open_paths`) for
-browser-facing enrolment flows, guarded by the ingress SSO (forwardAuth)
-instead of the hub JWT.
-
-Bundled addons: `maps` (Google Routes / Places New / Weather - needs
-`GOOGLE_MAPS_API_KEY`; the three weather tools - current, daily and
-hour-by-hour - all report **wind with its gust** and a bearing in degrees plus
-a French 16-point cardinal derived from them, never Google's `cardinal` enum.
-`weather_hourly` stops at 24 h because the upstream `pageSize` caps there, and
-one page is enough to answer when the rain starts), `transit` (SNCF + IDFM Navitia - needs `SNCF_API_KEY`,
-`IDFM_API_KEY`), `google` (user-data class: Gmail search / read / attachment +
-**drafts only** - list, read, create (standalone or as a reply, where the server derives
-thread, recipient and subject from the parent - `Reply-To` beating `From`) and amend,
-each answering with a stable `link`
-straight to the draft in the Gmail web UI (`ROSETTA_GMAIL_ACCOUNT` overrides the account
-index when the mailbox is not the browser's first) - plus **`mail_send`**
-(0.27.0), the one sending tool: a reviewed draft by its id - the recommended
-path - or a directly composed message or reply, derived by the same code as a
-draft. Calendar list/read/create/update/**delete** - `calendar_delete` (0.27.0)
-is also how a received invitation is cleared: removing an event one does not
-organise removes it from this calendar only and declines it, while deleting an
-event one organises cancels it for every guest, `send_updates` picking who gets
-the cancellation mail. Still **no labels and no draft deletion**. Until 0.26
-"no send, no delete" was structural - the guard was the tool surface itself,
-the hub having no finer arbiter to offer. 0.27.0 lifts exactly that premise:
-per-tool authorization now lives in **Tessera**, the policy gateway deployed in
-front of the hub, so who may send or delete - on which channel, after which
-confirmation - is its policy plus the calling agent's guard; the hub keeps
-saying plainly what each irreversible tool does. `calendar_list` names the account's
-calendars with the access role on each, so a caller can *choose* where it reads
-and where it writes: every calendar tool takes a `calendar_id` (default
-`primary`, several comma-separated, or `*` for the whole account), and every
-event read carries the calendar it came from - the only way `calendar_update`
-can aim, an event id having no meaning outside its calendar. Events also carry
-and accept `visibility` (`private` hides the details from the other readers of a
-shared calendar) and **attendees**, the single place this addon touches a third
-party. `send_updates` picks who gets an invitation *mail*: the default
-`externalOnly` mails exactly the guests who have no Google Calendar and would
-otherwise be invited to nothing, `all` mails everyone on top of the calendar
-invitation, `none` mails no one. An invitation - like a sent mail - is
-caller-addressed, caller-written outbound traffic: an exfiltration path by
-nature. Nothing here can close it: *who* may be invited or written to is
-contextual policy and belongs to Tessera and the calling agent's guard (channel,
-human confirmation, allowlist) - the hub knows neither channel nor shield. Listing calendars needs
-the `calendar.calendarlist.readonly` scope, which `calendar.events` does not
-grant: an enrolment predating 0.23.0 is told to renew rather than handed an
-opaque 403. Attachments come back transcribed to text
-(PDF via pypdf) for reading, or as raw base64 (`raw=True`) for native storage. One-time per-user enrolment at
-`/google/enroll` stores the Google refresh token server-side under
-`ROSETTA_GOOGLE_DATA`), `withings` (user-data class, **read-only**: body
-measures, daily activity, sleep summaries, workouts and the devices themselves,
-enrolled once at `/withings/enroll`), and `github` (user-data class, for the
-coding agent: nine read tools — repo listing, file, tree, commits, code search,
-tags, Actions runs, plus pull requests (list, and one in detail with its merge
-state, changed files and, on request, the patch) — and exactly **four** write
-tools, `repo_create` (a **new** repository: always private, always empty — an
-auto-generated README would make the first push of an existing clone
-non-fast-forward, which the `/git/` proxy refuses — and always under the
-caller's own account; pure creation, an existing name is refused), `repo_commit`
-(create / modify / **delete** in one atomic commit through the Git Data API; a
-`null` content deletes, so deletion is never a separate capability to unlock),
-`repo_tag`, and `pull_request_merge`. Deliberately **absent**, and that absence
-*is* the guarantee rather than a hook: repository deletion, flipping a
-repository public, forks, branch deletion, force-push, issues, opening /
-closing / commenting / reviewing a pull request, Actions secrets, settings,
-collaborators.
-
-Two upstream behaviours shape the pull request tools. GitHub computes
-mergeability **asynchronously**: the first read of a dormant PR answers
-`mergeable: null` and starts a background job, so the addon re-reads rather than
-handing an agent a null it would read as "not mergeable" — a silent false
-negative. And a merge carries the head SHA that was just read, so a branch that
-moved in between earns a 409 instead of merging something nobody looked at.
-The branch is never deleted afterwards: that tool does not exist here.
-
-Needs a **GitHub App** with *Expire user authorization tokens* enabled — without
-it GitHub issues no refresh token — declaring `contents: write`,
-`metadata: read`, `actions: read`, **`pull requests: read`** (merging itself
-goes through `contents: write`), **`administration: write`** (repository
-creation — and remember a permission change only takes effect once **approved
-on the installation**) and, easily forgotten, **`workflows: write`**
-for any commit touching `.github/workflows/`. Credentials via
-`GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`, per-user tokens under
-`ROSETTA_GITHUB_DATA`, enrolled once at `/github/enroll`), and `food`
-(Open Food Facts: barcode(s) — a whole shopping basket in one call — to name,
-brand, ingredients, allergens, additives, nutriments per 100 g, Nutri-Score,
-NOVA and Eco-Score, plus a free-text search as a fallback. **No key, no
-account, no enrolment**: read access is anonymous, so this addon carries no
-secret and stays machine class. Open Food Facts is community-*editable* and no
-writing tool exists here — that absence is what stops an agent publishing into
-a public database on the user's behalf. Calls are rate-limited **in-process**
-because the upstream quota, 15 product reads and 10 searches per minute, is
-counted per **IP** — i.e. per deployment, shared with every other service
-behind the same egress — and exceeding it earns a ban for all of them),
-`git` (a smart-HTTP proxy rather than a tool surface — see its own section below),
-`courrier` (user-data class: the family's own Zimbra mailboxes over plain IMAP —
-search / read / **drafts only** — no send, no delete here (the guard `google`
-itself carried until 0.27.0): the human reviews the draft in their client and
-presses the button. A draft reply chains `In-Reply-To`/`References` from the original and
-honours `Reply-To` over `From`, so it lands in the recipient's thread, not
-beside it. Plus **disposable aliases** through the OVH v2 API, self-service
-*bounded by construction*: every tool only lists, creates or deletes aliases
-pointing at the CALLER's own mailbox — create one per merchant, burn it at the
-first spam. The mailbox is derived from the token identity; passwords are
-read from the vault with the caller's own token, agents never see them.
-**Named `courrier`, not `mail`, on purpose**: `google` reads Gmail and this one
-reads a different mailbox entirely. While both were `mail_*`, told apart only by
-the language of their tool names, agents conflated them — and an outage on one was
-reported as "the mail is down" while the other answered fine. Every tool
-description here names the mailbox it opens), and
-`postier` (the hub's **machine-class** sending path — long its only one, until
-`google` gained `mail_send` for human subjects in 0.27.0 — built for
-the household assistant, whom `/courrier` refuses by identity: the sender is
-frozen to `POSTIER_FROM`, recipients must match `POSTIER_ALLOWED` (default:
-the family domain), an hourly sliding-window quota keeps a looping agent
-polite, and every send is logged then copied to Sent over IMAP. A hijacked
-agent writes an awkward email to the family, not spam to the world).
-Finally `meteo` (Open-Meteo: hour-by-hour **wind in knots** - mean, gust and
-gust ratio, bearing - for planning a sail. Like `food` it needs no key, no
-account and no enrolment, so it holds no secret and stays machine class.
-Two tools: `wind_forecast`, bounded to the spot's daylight hours and able to
-run the same slot past several models, and `wind_spots` over a registry given
-in `ROSETTA_WIND_SPOTS`.
-
-Three upstream behaviours drive the design, all measured against the live API
-rather than read off the docs:
-
-- A model asked **outside its domain vanishes from a batched response** - no
-  error, no null column, HTTP 200 - while the same model asked **on its own**
-  answers an honest `400 / "No data is available for this location"`.
-- The response key is suffixed by **how many models survived**, not by how many
-  were asked: two requested and one returned yields the bare `wind_speed_10m`,
-  so a naive parser files one model's numbers under another's name.
-- Past its **horizon** a model does the opposite and returns `null` rows.
-
-Hence: **one HTTP request per model, never a batched one**, which makes the
-first two impossible rather than merely handled, and nulls are dropped instead
-of being read as a flat calm. Wind is requested in knots natively
-(`wind_speed_unit=kn`) and in the spot's own zone (`timezone=auto` - pinning
-the house zone onto a spot elsewhere pushes sunset onto the next calendar day
-and collapses the daylight window). Bearings are averaged as a **circular**
-mean, because 350° and 10° average to north, not to south. The data is
-**CC-BY 4.0**, so every answer names its source).
-
-Last, `trace` (walking and hiking routes over OpenStreetMap, **no key, no
-account**: `trace_calcule` routes an ordered list of points on foot or by bike
-through [BRouter](https://brouter.de), and `trace_pois` finds what a walker
-needs — drinking water, viewpoints, shelters, benches, waymarked trails —
-through Overpass. Sightseeing landmarks stay with `search_places` in `maps`:
-ratings, review *counts* and opening hours are Google's and OSM has no
-equivalent, so the two sources meet in the caller's own file, field by field,
-each keeping its provenance).
-
-Its design rule is that **the geometry never travels through the model**:
-`trace_calcule` answers with the numbers — distance, D+/D−, surfaces, metres of
-steps, per-leg distances, and how far each requested point fell from the track
-— plus a URL. `GET /trace/geometrie` then returns the track
-[polyline-encoded](https://developers.google.com/maps/documentation/utilities/polylinealgorithm)
-for the caller to write straight to disk. A 3 km town loop is 328 points and
-13 kB of GPX; retyped by a language model, one dropped character shifts the
-whole tail of the walk. The route is **stateless** — the URL carries the same
-parameters, so it recomputes rather than reading a cache that would need a
-lifetime, a size and a replica count.
-
-Four upstream behaviours drive it, all measured against the live services on
-2026-08-04 rather than read off the docs:
-
-- BRouter takes **`lon,lat`** pairs, the reverse of every other tool here. The
-  flip lives in exactly one function, because getting it wrong yields a
-  plausible route in the wrong hemisphere rather than an error.
-- Its failures are **not JSON**: an unroutable pair is HTTP 400 with a
-  plain-text body (`target island detected for section 0`), an unknown profile
-  is HTTP 500 with an **empty** one. Parsing before checking the status turns a
-  usable message into a decoding traceback. Profile names are case-sensitive,
-  the only foot profile is `hiking-beta`, and `trekking` is a **bicycle**
-  profile despite the name.
-- Ascent is computed here with a **5 m hysteresis filter**, one method for both
-  directions so a loop reports the same figure twice. Raw accumulation inflated
-  a real 9.5 km Chartreuse loop from 378 m to 506 m.
-- Overpass emits in its own order and truncates on a **pooled** limit, so
-  asking for `eau,vue,banc` around a town came back as benches only, with both
-  wanted types crowded out. Each type gets its own named set and its own limit,
-  and the answer is grouped by type.
-
-A requested point anchors to its nearest track vertex **searching forward
-only**, from the previous anchor. On a loop the last point *is* the first one,
-and a global nearest-vertex search snaps it back to index 0 — turning a final
-260 m stroll home into a 2 770 m leg measured the wrong way round the town.
-
-`altimetrie="ign"` re-profiles a track on IGN **RGE ALTI** (1 m grid over
-France, free, no key) instead of BRouter's own model. On that Chartreuse loop
-the two agreed to 1 %, so it is an option rather than the default — it earns
-its round trip only on fine terrain. Two IGN quirks: the service **resamples
-evenly along the line** instead of answering at the vertices it was given, and
-booleans must be sent as the **strings** `"true"` / `"false"` (a real JSON
-boolean is rejected with `BAD_PARAMETER`).
-
-And `marees` (French tide **times** and **coefficient** — nothing else: no
-height curve, no range, no threshold windows, no nautical routing. The two
-questions it answers are "is the foreshore walkable at three?" and "will the
-golfe run hard on Saturday?", and both need a handful of times and one number).
-
-⚠️ **The coefficient is not local.** It is computed for the port of **Brest**
-and holds identically along the Channel and Atlantic coasts, the tidal wave
-reaching them barely distorted. What varies with place is the TIMES. The same
-100 means ~6 m of range at Brest, over 13 m at Mont-Saint-Michel, and 0.5 m in
-the Mediterranean — where the notion is meaningless. Hence the shape of every
-answer: one coefficient per tide, times per port.
-
-Source: [api-maree.fr](https://api-maree.fr), computing water levels from the
-Ifremer/PREVIMER harmonic constituents — free, one account key, 360 requests
-per hour, window bounded to **J−30 → J+30**. Its coefficient is stated by the
-source itself as **non-official**: the authority is the Shom, which *sells* its
-SPM/SAPM service. Good enough to decide a walk or a session, not good enough
-for anything where the official figure is binding — and every answer says so.
-
-Two guards live in the code rather than only in this file: the **distance** to
-the reference port is always returned and flagged past 25 km (a port 50 km away
-does not predict your foreshore), and a date outside J±30 is **refused** rather
-than extrapolated. A place is resolved by name against the 131 known ports
-first, then through the keyless **IGN geocoder** — no third key for a question
-that is already answered by open data.
-
-And `verbatim` (what was actually **said** in a video or an episode, timestamped
-— **no key, no account, no enrolment**: it fetches the subtitles the platform
-already publishes, using yt-dlp to resolve them and a plain GET for the text.
-No speech recognition anywhere, so no GPU, no audio downloaded, and a media
-with no published subtitles comes back **empty saying so** rather than
-approximately transcribed. Three tools: `verbatim` (the transcript in
-sentence-sized lines, each carrying the second it starts at and a link that
-seeks straight there, in recoverable slices), `verbatim_cherche` (where a
-subject was discussed — the answer to "get me the passage about X" without
-pushing an hour of speech through the model) and `verbatim_fiche` (title,
-channel, date, duration, chapters and the available subtitle languages, without
-a line of the text)).
-
-Every answer carries **`origine`**: `manuel` or `auto`. They are not the same
-material — automatic captions are ASR, with unreliable punctuation and mangled
-proper nouns and figures. Summarising one is fine; quoting it word for word as
-if the author had written it is a false quotation, so the field is part of the
-answer rather than a detail. Manual tracks are preferred wherever they exist.
-
-Two upstream behaviours drive the design, measured against the live service on
-2026-08-31 rather than read off the docs:
-
-- On YouTube the `vtt` URL of an **automatic** track serves an **HLS playlist**
-  (`#EXTM3U`), not VTT: what comes back is a table of segment URLs. The addon
-  follows it; without that, "the transcript" is a list of links.
-- Automatic cues **roll** — each repeats the tail of the previous one so the
-  text scrolls on screen — so a naive concatenation says everything two or
-  three times, and every search then hits the same moment three times over.
-
-Hence the format preference **json3 → vtt → srt**: json3 marks its scrolling
-events with `aAppend`, and ignoring those yields the text once. The VTT path
-keeps a suffix-overlap filter for everything that is not YouTube.
-
-⚠️ **yt-dlp ages badly on purpose.** Platforms change their players, and a
-yt-dlp a few months old does not degrade — it stops, on every video at once.
-The dependency is deliberately unpinned and the image is expected to be rebuilt
-rather than frozen; an addon that suddenly reads nothing wants a fresh image
-before it wants a bug report.
-
-Tool descriptions are intentionally in **French**: they are runtime UX for the
-French-speaking agents this hub serves, not documentation.
-
-`withings`, `github` and `quotas` are the hub's **single-writer** components: they
-rotate the refresh token on every refresh, invalidating the previous one, so
-the stored credential must have exactly one writer. Refreshes are serialized
-per user and the access token is cached for its full three hours - but running
-two replicas would have them burn each other's token. Keep it at one.
-(`quotas` persists a rotated credential the same way, on the chance that
-Anthropic rotates too - the answer is not documented either way.)
-Withings also answers **HTTP 200 for its failures**: the real outcome is the
-`status` field inside the JSON body, and a measure arrives as a `(value, unit)`
-pair where `unit` is a power of ten (`78192, -3` = 78.192 kg).
-
-### The `quotas` addon — an undocumented endpoint, read honestly
-
-`quotas` answers "how much of the subscription is left": the 5-hour window, the
-weekly caps, the paid-overflow state, and where the week actually went
-(Claude Code vs chat vs Cowork). Two things about it are worth knowing before
-relying on it, and both are measured rather than documented.
-
-**There is no public API for this.** Anthropic's documented Usage & Cost Admin
-API reports a *Console organization's* token spend and states it is unavailable
-for individual accounts; it says nothing about a claude.ai subscription's
-windows. This addon calls `GET /api/oauth/usage`, the endpoint Claude Code's own
-`/usage` uses. It is undocumented and may change or vanish without notice — so
-the addon reads the payload's self-describing `limits[]` array (a bucket added
-upstream shows up on its own) and, when nothing matches, **says the format
-changed** instead of answering an empty object. A rate-limited read returns the
-last known figures carrying their age (`obsolete_depuis`), never a stale number
-passed off as current.
-
-**A `claude setup-token` credential cannot read it.** That officially documented
-one-year OAuth token is the obvious thing to reach for, and it is refused with
-`403 oauth_scope_insufficient` (`required_scopes: ["user:profile"]`) while the
-same token gets a 200 on `/v1/messages` — "it can only make model requests" is
-literal. Enrolment therefore asks for the refresh token of a real login, minted
-in a throwaway `CLAUDE_CONFIG_DIR` so the hub holds a credential of its own and
-never touches the operator's own session; the enrolment page carries the
-command, and probes the credential before storing it. A second login does not
-revoke the first.
-
-The `User-Agent` matters too: without a `claude-code/<version>` agent the request
-lands in an anonymous, permanently rate-limited bucket even with a valid token.
-
-**Reading is open to machine tokens; enrolling is not.** A supervision pod
-watching the gauges has no human behind it, so `quotas` is not `identity =
-"user"` - but the two halves sit behind different layers, which is what makes
-the split safe. The tools are reached with the hub's JWT and accept a machine
-subject; `/quotas/enroll` is exempt from that JWT (`open_paths`) and guarded by
-the ingress SSO, refusing anything without a `Remote-User` header. No bearer
-token, machine or not, can enrol or replace a credential.
-
-What a stolen machine token buys is therefore **a reading, and only a reading**.
-The addon exposes no tool that sends a prompt, and its whole outbound surface is
-one GET on the usage endpoint plus the refresh that precedes it - `/v1/messages`
-is never called from here, so this path cannot spend a token of the very
-subscription it reports on. The stored credential is a *full account*
-credential, so it is never returned, logged, or rendered into an answer or an
-error. Three tests pin exactly that: the set of endpoints the addon may call,
-the absence of the credential from every answer including the failures, and the
-403 a machine identity earns on enrolment.
-
-Whose gauges a machine call reads is `ROSETTA_QUOTAS_OWNER`, or the single
-enrolled subject when there is exactly one. Several enrolled and no owner set is
-an **error naming the variable**, never a guess - serving a household member's
-personal budget by alphabetical order would be a leak wearing the costume of a
-default.
-
-### The `git` addon — a smart-HTTP proxy, not a tool surface
-
-`repo_commit` publishes file **contents**, passed inline in the tool call: an
-agent must retype every byte it wants to publish. Above a few kilobytes that is
-a lossy channel, and a corrupted retype rewrites a source file silently. The
-`git` addon removes the retyping entirely — the pod pushes real git, so the
-object that was verified is the object that gets published.
-
-It is therefore the one addon whose surface is **plain HTTP rather than MCP**:
-git's smart-HTTP endpoints, mounted per repository.
-
-```
-GET  /git/<owner>/<repo>/info/refs?service=git-receive-pack|git-upload-pack
-POST /git/<owner>/<repo>/git-receive-pack     # push
-POST /git/<owner>/<repo>/git-upload-pack      # fetch / clone
-```
-
-The caller authenticates with its ordinary hub token; the addon resolves that
-identity to the same GitHub App credential the `github` addon already refreshes,
-and streams the exchange to github.com. **The GitHub credential never leaves the
-hub** — which is the whole point: a pod can push without ever holding one, so a
-compromised agent cannot walk off with it.
-
-What it refuses, before a byte reaches GitHub:
-
-| Refused | Why |
-|---|---|
-| deleting any ref | destructive, and never needed from an agent |
-| a ref outside `refs/heads/*` and `refs/tags/*` | nothing else has business being pushed |
-| moving an existing tag | a tag is what a published image was built from |
-| a non-fast-forward push | see below — GitHub decides, `force: false` |
-| a push updating several refs at once | one promotion per request |
-| `Content-Encoding` on a receive-pack body | it would blind the inspection |
-
-The non-fast-forward rule must not be mistaken for belt-and-braces. **The wire
-protocol carries no force flag**: the server decides by ancestry, and GitHub
-accepts a force-push on an unprotected branch. Relaying verbatim would therefore
-protect nothing.
-
-⚠️ **0.14.x asked the wrong oracle, and refused everything.** It called
-`/compare/<old>...<new>` *before* relaying the pack — but `<new>` is precisely
-the commit being pushed, so GitHub answered `404`, which the addon read as
-"ancestry unverifiable" and refused. Every update of an existing branch was
-rejected; only branch creations got through. The 16 tests missed it because their
-mock answered `ahead` for any sha, existing or not.
-
-**0.15.0 asks the only party that can answer, and asks it last.** A branch update
-is streamed to a throwaway ref (`refs/heads/rosetta-scratch/<hex>`, created from
-zero — nothing there can be overwritten), which lands the objects on GitHub.
-The real ref is then moved with `PATCH /git/refs/…` and **`force: false`**, which
-GitHub itself refuses unless the update is a fast-forward — the guarantee now
-comes from the server that owns the branch, not from a question asked too early.
-The scratch ref is dropped in a `finally`. Only the command prefix is rewritten,
-so the pack still streams without ever being buffered.
-
-Two consequences worth knowing. A push touching **several refs at once** is
-refused: one promotion per request. And a refusal now comes back as a git
-**`ng` line** in the report-status rather than an HTTP 403 — once the pack is
-flowing git wraps the exchange in a side-band and an error body never reaches
-the user, who sees only `RPC failed; HTTP 403` with no reason at all.
-
-Deciding *whether to push at all* is deliberately **not** here. Only the calling
-side can know whether a human is in front, so that judgement belongs to the git
-credential helper in the pod; this addon enforces what is visible on the wire.
-
-Only the ref rules are unconditional: `ROSETTA_GIT_REPOS` can additionally narrow
-the proxy to an explicit set of repositories, and is empty (no restriction) by
-default — the App's own installation scope is the outer bound.
+| Addon | Role | Details |
+|---|---|---|
+| `courrier` | The family's own Zimbra mailboxes over IMAP: search, read, drafts, disposable OVH aliases (user) | [section](docs/addons.md#courrier) |
+| `food` | Open Food Facts, read-only: product by barcode, text search; no key | [section](docs/addons.md#food) |
+| `git` | Smart-HTTP git proxy to GitHub, using the `github` addon's token (user) | [section](docs/addons.md#git) |
+| `github` | GitHub reads and bounded writes (commit, tag, repo creation, PR merge) as the caller, via a GitHub App (user) | [section](docs/addons.md#github) |
+| `google` | Gmail and Google Calendar as the caller: read, drafts, send, events (user) | [section](docs/addons.md#google) |
+| `maps` | Google Maps Platform behind one key: routes, places, weather | [section](docs/addons.md#maps) |
+| `marees` | Tide times and coefficient for the French coast (api-maree.fr) | [section](docs/addons.md#marees) |
+| `meteo` | Hourly wind in knots for sailing spots (Open-Meteo); no key | [section](docs/addons.md#meteo) |
+| `postier` | Machine-class mail sending from the assistant's mailbox: locked sender, allowlisted recipients, hourly cap | [section](docs/addons.md#postier) |
+| `quotas` | Usage gauges of a Claude subscription and when they reset | [section](docs/addons.md#quotas) |
+| `trace` | Walking and cycling routes on OpenStreetMap (BRouter) with elevation, and Overpass points of interest | [section](docs/addons.md#trace) |
+| `transit` | Next departures and disruptions, SNCF and RATP/IDFM (Navitia) | [section](docs/addons.md#transit) |
+| `verbatim` | What was said in a video: published subtitles split into timestamped sentences (`yt-dlp`) | [section](docs/addons.md#verbatim) |
+| `withings` | The caller's Withings data, read-only: activity, body measures, sleep, workouts, devices (user) | [section](docs/addons.md#withings) |
 
 ## Authentication
 
@@ -467,7 +77,7 @@ issued by an external OIDC provider (tested with
 `access_token_signed_response_alg` != `none`), against the provider's JWKS.
 
 - Machine agents use the `client_credentials` grant - no human in the loop.
-- User-delegated access (future data-holding addons) uses `authorization_code`
+- User-delegated access (the `identity = "user"` addons) uses `authorization_code`
   + refresh, or the device code flow for headless bodies.
 - [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728) protected-resource
   metadata is served at `/.well-known/oauth-protected-resource` (and per
@@ -508,48 +118,102 @@ pointer above. Tool names and schemas thereby become readable without a
 token: an accepted trade-off for a hub on an internal network, behind a
 gateway meant to be its only caller.
 
+
 ## Configuration
 
-| Env | Default | Purpose |
-|---|---|---|
-| `ROSETTA_AUTH` | `oidc` | `off` disables auth (local dev only) |
-| `ROSETTA_ISSUER` | *(required)* | OIDC issuer (token `iss`). No default: one deployment's URL baked into a public image is useless to anyone else. |
-| `ROSETTA_AUDIENCE` | external URL | accepted token `aud`. A token audienced to this value is accepted on every mount; one audienced to `<audience>/<addon>` is accepted **only on that addon** — which is how a signed authorisation for one addon stops being usable on another. |
-| `ROSETTA_EXTERNAL_URL` | *(required)* | public URL of this hub (RFC 9728 metadata, OAuth callbacks). No default, same reason. |
-| `ROSETTA_JWKS_URI` | `<issuer>/jwks.json` | JWKS endpoint override |
-| `ROSETTA_TRUSTED_ISSUERS` | *(none)* | Extra issuers accepted for VALIDATION only, comma-separated, each `<issuer>` or `<issuer>=<jwks_uri>` (default JWKS `<issuer>/.well-known/jwks.json`). Meant for an authority that mints delegation tokens on a human's behalf: it is not advertised in the RFC 9728 document, because no client can run a flow against it. |
-| `ROSETTA_ADDONS` | all discovered | comma-separated allowlist |
-| `ROSETTA_GIT_REPOS` | *(empty)* | `git` addon: optional `owner/name` allowlist for the smart-HTTP proxy. Empty = every repository the App can reach; the ref rules apply either way |
-| `GOOGLE_MAPS_API_KEY` | - | `maps` addon |
-| `SNCF_API_KEY`, `IDFM_API_KEY` | - | `transit` addon |
-| `ROSETTA_GMAIL_ACCOUNT` | `0` | `google` addon: account segment of the draft web links (`/mail/u/<this>/`) |
-| `ROSETTA_GOOGLE_DATA` | `/data/google` | `google` addon: per-user credential store (volume) |
-| `WITHINGS_CLIENT_ID`, `WITHINGS_CLIENT_SECRET` | - | `withings` addon: the OAuth app registered on the Withings developer dashboard |
-| `ROSETTA_WITHINGS_DATA` | `/data/withings` | `withings` addon: per-user credential store (volume) |
-| `ROSETTA_QUOTAS_DATA` | `/data/quotas` | `quotas` addon: per-user credential store (volume) |
-| `ROSETTA_QUOTAS_OWNER` | *(inferred)* | `quotas` addon: whose gauges a **machine** token reads. Inferred when exactly one subject is enrolled; **required** beyond that, where a guess would serve someone else's personal budget |
-| `ROSETTA_QUOTAS_CLIENTS` | *(empty)* | `quotas` addon: comma-separated machine subjects allowed to read. Empty = every machine identity the hub already authenticated |
-| `ROSETTA_CLAUDE_UA` | `claude-code/<version>` | `quotas` addon: the User-Agent sent to Anthropic's usage endpoint. Not cosmetic — an unrecognised agent is rate-limited into a permanent 429. Overridable so a newer Claude Code can be tracked without a release here |
-| `OFF_USER_AGENT` | `Alfred/1.0 (contact@antor.fr)` | `food` addon: Open Food Facts requires a custom User-Agent naming the app, or treats the caller as a bot |
-| `BROUTER_URL` | `https://brouter.de/brouter` | `trace` addon: routing engine. The public instance is a courtesy service with no SLA; self-hosting (`abrensch/brouter` + the `segments4` tiles for the area) is a URL change, never a rewrite — which is why it is read per call |
-| `OVERPASS_URL` | `https://overpass-api.de/api/interpreter` | `trace` addon: OSM point lookups. The quota is counted per **IP**, i.e. per deployment — one grouped request per call, never a loop |
-| `OVERPASS_USER_AGENT` | `rosetta-mcp/trace (contact@antor.fr)` | `trace` addon: Overpass expects a descriptive agent naming a contact |
-| `IGN_ALTI_URL` | `https://data.geopf.fr/altimetrie/…/elevationLine.json` | `trace` addon: IGN Géoplateforme elevation, used only when a call asks for `altimetrie="ign"`. Free, keyless, France only |
-| `API_MAREE_KEY` | - | `marees` addon: free account key from api-maree.fr (360 req/h). Absent = the addon mounts **degraded** and says so, the hub stays up |
-| `ROSETTA_WIND_SPOTS` | *(empty)* | `meteo` addon: named sailing spots as JSON, `{"La Torche": "47.8367,-4.3492"}` or `{"La Torche": {"latlng": "…", "note": "…"}}`. Read per call, so adding a spot is a rollout, not a rebuild; a malformed entry is logged and skipped rather than taking the registry down |
-| `TZ` | `Europe/Paris` | local zone used to resolve bare `YYYY-MM-DD` bounds (and, in `meteo`, only to decide what "today" means - forecasts use the spot's own zone) |
+Everything is read from the environment (with `ROSETTA_AUTH=off`, `ROSETTA_ISSUER` and `ROSETTA_EXTERNAL_URL` are not needed to start). "Required" means the hub or the addon does not
+work without it. The hub does not refuse to start on a missing one; an addon's
+`required_env` mounts that addon `degraded` and nothing else.
+
+| Variable | Scope | Required | Default | Meaning |
+|---|---|---|---|---|
+| `ROSETTA_AUTH` | hub | no | `oidc` | `off` disables auth (local dev only) |
+| `ROSETTA_ISSUER` | hub | yes (unset, no default: tokens cannot be validated without it) | none | OIDC issuer (token `iss`) |
+| `ROSETTA_EXTERNAL_URL` | hub, `git`, `github`, `google`, `quotas`, `trace`, `withings` | yes (unset, no default: metadata, callbacks and links are unusable without it) | none | public URL of the hub (RFC 9728 metadata, OAuth callbacks, enrolment links) |
+| `ROSETTA_AUDIENCE` | hub | no | `ROSETTA_EXTERNAL_URL` | accepted token `aud`; a token audienced to `<audience>/<addon>` is accepted only on that addon |
+| `ROSETTA_JWKS_URI` | hub | no | `<issuer>/jwks.json` | JWKS endpoint override |
+| `ROSETTA_TRUSTED_ISSUERS` | hub | no | empty | extra issuers accepted for validation only, comma-separated, each `<issuer>` or `<issuer>=<jwks_uri>` |
+| `ROSETTA_ADDONS` | hub | no | all discovered | comma-separated allowlist of addons to mount |
+| `TZ` | `google`, `marees`, `meteo`, `quotas`, `withings` | no | `Europe/Paris` | local zone for bare dates and "today" |
+| `GOOGLE_MAPS_API_KEY` | `maps` | yes | none | Google Maps Platform key |
+| `SNCF_API_KEY` | `transit` | yes | none | SNCF Navitia key |
+| `IDFM_API_KEY` | `transit` | yes | none | IDFM PRIM key |
+| `API_MAREE_KEY` | `marees` | yes | none | api-maree.fr key |
+| `ROSETTA_WIND_SPOTS` | `meteo` | no | empty | named spots as JSON, `{"La Torche": "47.8367,-4.3492"}`; read per call |
+| `ROSETTA_GOOGLE_DATA` | `google` | no | `/data/google` | per-user credential store (volume) |
+| `ROSETTA_GMAIL_ACCOUNT` | `google` | no | `0` | account index in the draft web links (`/mail/u/<this>/`) |
+| `GITHUB_CLIENT_ID` | `github` | yes | none | GitHub App client id |
+| `GITHUB_CLIENT_SECRET` | `github` | yes | none | GitHub App client secret |
+| `GITHUB_OWNER` | `github` | no | `AntorFr` | account under which `repo_create` creates repositories |
+| `ROSETTA_GITHUB_DATA` | `github` | no | `/data/github` | per-user token store (volume) |
+| `ROSETTA_GIT_REPOS` | `git` | no | empty | `owner/name` allowlist, comma-separated; empty = every repository the App reaches |
+| `WITHINGS_CLIENT_ID` | `withings` | yes | none | Withings OAuth app client id |
+| `WITHINGS_CLIENT_SECRET` | `withings` | yes | none | Withings OAuth app secret |
+| `ROSETTA_WITHINGS_DATA` | `withings` | no | `/data/withings` | per-user credential store (volume) |
+| `ROSETTA_QUOTAS_DATA` | `quotas` | no | `/data/quotas` | per-user credential store (volume) |
+| `ROSETTA_QUOTAS_OWNER` | `quotas` | only with several enrolled subjects | inferred when exactly one is enrolled | whose gauges a machine token reads |
+| `ROSETTA_QUOTAS_CLIENTS` | `quotas` | no | empty = every machine identity the hub authenticated | comma-separated machine subjects allowed to read |
+| `ROSETTA_CLAUDE_UA` | `quotas` | no | `claude-code/2.1.274` | User-Agent sent to Anthropic's usage endpoint; an unrecognised one gets rate-limited |
+| `OFF_USER_AGENT` | `food` | no | `Alfred/1.0 (contact@antor.fr)` | User-Agent for Open Food Facts |
+| `BROUTER_URL` | `trace` | no | `https://brouter.de/brouter` | routing engine; read per call |
+| `OVERPASS_URL` | `trace` | no | `https://overpass-api.de/api/interpreter` | OSM point lookups |
+| `OVERPASS_USER_AGENT` | `trace` | no | `rosetta-mcp/trace (contact@antor.fr)` | User-Agent sent to Overpass |
+| `IGN_ALTI_URL` | `trace` | no | IGN Géoplateforme elevation endpoint | used only for `altimetrie="ign"` |
+| `MAIL_IMAP_HOST` | `courrier` | yes | none | IMAP host of the mailboxes (port 993, TLS) |
+| `MAIL_DOMAIN` | `courrier` | yes | none | family mail domain |
+| `MAIL_DRAFTS_FOLDER` | `courrier` | no | `Drafts` | IMAP folder receiving drafts |
+| `MAIL_VAULT_ADDR` | `courrier` | yes in practice (mailbox passwords come only from the vault) | empty | Vault (OpenBao) address from which mailbox passwords are read |
+| `MAIL_VAULT_MOUNT` | `courrier` | no | `jwt-authelia` | Vault JWT auth mount |
+| `MAIL_VAULT_ROLE` | `courrier` | no | `rosetta-mail` | Vault role |
+| `OVH_APPLICATION_KEY` | `courrier` | no | none | OVH API key, needed for the alias tools |
+| `OVH_APPLICATION_SECRET` | `courrier` | no | none | OVH API secret, same |
+| `OVH_CONSUMER_KEY` | `courrier` | no | none | OVH consumer key, same |
+| `POSTIER_FROM` | `postier` | yes | none | sender address and login, fixed |
+| `POSTIER_PASSWORD` | `postier` | yes | none | mailbox password |
+| `POSTIER_ALLOWED` | `postier` | no, but without it every recipient is refused | empty | comma-separated recipient patterns (`fnmatch`) |
+| `POSTIER_MAX_PER_HOUR` | `postier` | no | `10` | sliding-window hourly cap |
+| `POSTIER_SMTP_HOST` | `postier` | no | `smtp.mail.ovh.net` | SMTP host |
+| `POSTIER_IMAP_HOST` | `postier` | no | `imap.mail.ovh.net` | IMAP host for the copy in the sent folder |
+| `POSTIER_SENT_FOLDER` | `postier` | no | `Sent` | sent folder |
 
 ## Development
+
+CI (the `test` job of `.github/workflows/docker-publish.yml`, which the `build` job needs)
+runs, on Python 3.12:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .[dev]
-.venv/bin/pytest
-ROSETTA_AUTH=off .venv/bin/uvicorn rosetta.main:app --port 8200
+.venv/bin/ruff check .                                # lint
+.venv/bin/pytest --cov --cov-report=term-missing      # tests + coverage
+ROSETTA_AUTH=off .venv/bin/uvicorn rosetta.main:app --port 8200   # local start (not CI)
 ```
+
+Once started with auth off, an addon answers MCP over POST on its slash-terminated path, e.g.
+`curl -s -X POST localhost:8200/food/ -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`.
+
+To run it as the container (auth off, no secrets, local only):
+
+```bash
+docker build -t rosetta-mcp .
+docker run --rm -p 8200:8200 -e ROSETTA_AUTH=off rosetta-mcp   # then: curl localhost:8200/health
+```
+
+Python ≥ 3.12 is required (`pyproject.toml`). Coverage fails below `fail_under` in
+`pyproject.toml`; lint ignores are listed there with their reason. `ROSETTA_AUTH=off` disables
+token validation, for local development only. With no secrets set, `/health`
+answers `degraded` and names the addons whose variables are missing: the expected state of a
+bare local start. `tests/test_surface.py` pins the tools, routes, health and environment
+variables read by the code against `tests/surface.json`; after an intended change, rewrite the snapshot with
+`python tests/test_surface.py --write` and review the diff.
 
 ## Deployment
 
-Published as `ghcr.io/antorfr/rosetta-mcp` (SemVer tags, `docker-publish`
-workflow). Runs as a plain container: port 8200, no volume, configuration by
-environment only.
+Published as `ghcr.io/antorfr/rosetta-mcp` (SemVer tags, `docker-publish` workflow). Plain
+container, port 8200, runs as user `rosetta` (uid 1000), configured by environment.
+
+The addons that store credentials (`google`, `github`, `withings`, `quotas`) write per-user files under
+`/data` (`/data/google`, `/data/github`, `/data/withings`, `/data/quotas` by default, each
+overridable, see Configuration). The image creates no `/data` and declares no `VOLUME`:
+mount a persistent volume at `/data`, writable by uid 1000, or credentials are lost with the
+container. Formats: `docs/donnees.md`.

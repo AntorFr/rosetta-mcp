@@ -43,9 +43,10 @@ from datetime import date, timedelta
 
 import httpx
 
-from ._common import TIMEOUT, new_server
+from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger("rosetta.marees")
 
 required_env = ["API_MAREE_KEY"]
 
@@ -75,7 +76,7 @@ _sites_cache = None
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport)
+    return http_client(_transport)
 
 
 def _key() -> str:
@@ -215,7 +216,72 @@ def _range(entree: dict) -> dict:
         try:
             out["hauteur_m"] = round(float(hauteur), 2)
         except (TypeError, ValueError):
-            pass
+            logger.debug("marees: hauteur illisible %r, champ omis", hauteur)
+    return out
+
+
+def _erreur_http(r, data) -> dict | None:
+    """The plain-words error for a non-200 answer, or None when it is a 200."""
+    # Formes d'erreur relevées sur le service vivant le 2026-08-06 : une clé
+    # absente sort en 422 avec un `detail` de validation FastAPI, une clé fausse
+    # en 401 `{"error": "invalid_api_key"}`. Les deux se disent en clair — un
+    # « HTTP 401 » sec enverrait chercher le problème côté réseau.
+    if r.status_code == 401:
+        return {"error": "clé api-maree.fr refusée (invalid_api_key) : vérifier API_MAREE_KEY "
+                         "dans l'environnement du serveur."}
+    if r.status_code == 422:
+        return {"error": "requête refusée par api-maree.fr (paramètre manquant ou invalide) : "
+                         f"{str(data)[:200]}"}
+    if r.status_code == 429:
+        return {"error": "quota api-maree.fr atteint (360 requêtes/heure) : réessayer plus tard."}
+    if r.status_code != 200:
+        detail = data.get("detail") if isinstance(data, dict) else None
+        return {"error": f"api-maree.fr : HTTP {r.status_code}{f' — {detail}' if detail else ''}"}
+    return None
+
+
+def _par_jour(data: dict, debut: str) -> dict[str, list]:
+    # Forme réelle, relevée sur le service le 2026-08-06 : `data` est une liste
+    # de JOURS, chacun portant sa `date` et sa liste d'`extrema`. Les heures y
+    # sont déjà en « HH:MM » local (pas d'ISO à découper), et le coefficient
+    # s'appelle `coef`. Il ne porte que sur les pleines mers.
+    par_jour: dict[str, list] = {}
+    for j in data.get("data") or []:
+        if not isinstance(j, dict):
+            continue
+        d = j.get("date") or debut
+        for e in j.get("extrema") or []:
+            if isinstance(e, dict):
+                par_jour.setdefault(d, []).append(_range(e))
+    return par_jour
+
+
+def _reponse(data: dict, libelle: str, port: dict, distance: float, par_jour: dict) -> dict:
+    # ⚠️ La donnée est en CC BY : l'attribution n'est pas une politesse, c'est la
+    # condition de la licence. On repasse celle que la source fournit elle-même,
+    # telle quelle, plutôt que d'en rédiger une approximation.
+    attribution = (data.get("source") or {}).get("attribution")
+    out = {
+        "lieu": libelle,
+        "port": port["site_name"],
+        "distance_km": round(distance, 1),
+        "source": "api-maree.fr (composantes harmoniques Ifremer/PREVIMER, CC BY)",
+        "attribution": re.sub(r"<[^>]+>", "", attribution) if attribution else None,
+        "coefficient_note": "coefficient NON OFFICIEL, calculé pour Brest — il vaut pour la "
+                            "Manche et l'Atlantique, et n'a aucun sens en Méditerranée. "
+                            "Le Shom fait autorité.",
+    }
+    # Un port lointain ne prédit pas votre estran : on le dit, on ne le devine pas.
+    if distance > LOIN_KM:
+        out["avertissement"] = (f"le port de référence est à {round(distance)} km : les heures "
+                                f"décalent avec la distance, à vérifier si la minute compte.")
+    if not par_jour:
+        # Plutôt qu'un objet vide, on rend ce que l'amont a dit : un silence
+        # serait indébogable, et la forme exacte n'a pas pu être observée ici.
+        out["error"] = "aucune marée lue dans la réponse — forme inattendue."
+        out["reponse_brute"] = str(data)[:600]
+        return out
+    out["jours"] = [{"date": d, "marees": v} for d, v in sorted(par_jour.items())]
     return out
 
 
@@ -270,61 +336,10 @@ async def marees(lieu: str, jour: str | None = None, jours: int = 1) -> dict:
         except ValueError:
             return {"error": f"réponse illisible d'api-maree.fr : {(r.text or '')[:200]}"}
 
-    # Formes d'erreur relevées sur le service vivant le 2026-08-06 : une clé
-    # absente sort en 422 avec un `detail` de validation FastAPI, une clé fausse
-    # en 401 `{"error": "invalid_api_key"}`. Les deux se disent en clair — un
-    # « HTTP 401 » sec enverrait chercher le problème côté réseau.
-    if r.status_code == 401:
-        return {"error": "clé api-maree.fr refusée (invalid_api_key) : vérifier API_MAREE_KEY "
-                         "dans l'environnement du serveur."}
-    if r.status_code == 422:
-        return {"error": "requête refusée par api-maree.fr (paramètre manquant ou invalide) : "
-                         f"{str(data)[:200]}"}
-    if r.status_code == 429:
-        return {"error": "quota api-maree.fr atteint (360 requêtes/heure) : réessayer plus tard."}
-    if r.status_code != 200:
-        detail = data.get("detail") if isinstance(data, dict) else None
-        return {"error": f"api-maree.fr : HTTP {r.status_code}{f' — {detail}' if detail else ''}"}
+    if (erreur := _erreur_http(r, data)):
+        return erreur
 
-    # Forme réelle, relevée sur le service le 2026-08-06 : `data` est une liste
-    # de JOURS, chacun portant sa `date` et sa liste d'`extrema`. Les heures y
-    # sont déjà en « HH:MM » local (pas d'ISO à découper), et le coefficient
-    # s'appelle `coef`. Il ne porte que sur les pleines mers.
-    par_jour: dict[str, list] = {}
-    for j in data.get("data") or []:
-        if not isinstance(j, dict):
-            continue
-        d = j.get("date") or debut
-        for e in j.get("extrema") or []:
-            if isinstance(e, dict):
-                par_jour.setdefault(d, []).append(_range(e))
-
-    # ⚠️ La donnée est en CC BY : l'attribution n'est pas une politesse, c'est la
-    # condition de la licence. On repasse celle que la source fournit elle-même,
-    # telle quelle, plutôt que d'en rédiger une approximation.
-    attribution = (data.get("source") or {}).get("attribution")
-    out = {
-        "lieu": libelle,
-        "port": port["site_name"],
-        "distance_km": round(distance, 1),
-        "source": "api-maree.fr (composantes harmoniques Ifremer/PREVIMER, CC BY)",
-        "attribution": re.sub(r"<[^>]+>", "", attribution) if attribution else None,
-        "coefficient_note": "coefficient NON OFFICIEL, calculé pour Brest — il vaut pour la "
-                            "Manche et l'Atlantique, et n'a aucun sens en Méditerranée. "
-                            "Le Shom fait autorité.",
-    }
-    # Un port lointain ne prédit pas votre estran : on le dit, on ne le devine pas.
-    if distance > LOIN_KM:
-        out["avertissement"] = (f"le port de référence est à {round(distance)} km : les heures "
-                                f"décalent avec la distance, à vérifier si la minute compte.")
-    if not par_jour:
-        # Plutôt qu'un objet vide, on rend ce que l'amont a dit : un silence
-        # serait indébogable, et la forme exacte n'a pas pu être observée ici.
-        out["error"] = "aucune marée lue dans la réponse — forme inattendue."
-        out["reponse_brute"] = str(data)[:600]
-        return out
-    out["jours"] = [{"date": d, "marees": v} for d, v in sorted(par_jour.items())]
-    return out
+    return _reponse(data, libelle, port, distance, _par_jour(data, debut))
 
 
 @mcp.tool()

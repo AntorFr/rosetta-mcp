@@ -2,12 +2,12 @@
 
 import time
 
+import fake_addons
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from starlette.testclient import TestClient
 
-import fake_addons
 from rosetta import auth as auth_module
 from rosetta.main import create_app
 

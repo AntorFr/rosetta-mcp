@@ -53,7 +53,7 @@ from collections import deque
 
 import httpx
 
-from ._common import TIMEOUT, new_server
+from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("rosetta.food")
@@ -119,9 +119,8 @@ _search_quota = _Quota(10, 60.0, "search")
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        timeout=TIMEOUT,
-        transport=_transport,
+    return http_client(
+        _transport,
         headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
     )
 
@@ -280,7 +279,7 @@ def _shape(code: str, product: dict) -> dict:
             out["nova"] = nova
             _put(out, "nova_libelle", NOVA_LABEL.get(nova))
         except (TypeError, ValueError):
-            pass
+            logger.debug("food: nova_group illisible %r, champ omis", nova)
 
     eco = _clean(product.get("ecoscore_grade"))
     _put(out, "ecoscore", eco.upper() if isinstance(eco, str) else None)

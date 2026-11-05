@@ -70,7 +70,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from ._common import TIMEOUT, new_server
+from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("rosetta.meteo")
@@ -105,7 +105,7 @@ MAX_MODELS = 5
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport)
+    return http_client(_transport)
 
 
 def _tz() -> str:
@@ -395,6 +395,41 @@ def _dispersion(models: list) -> dict:
     }
 
 
+async def _creneau(client, lat: float, lng: float, day: str, de: int | None,
+                   a: int | None) -> tuple[int, int, str]:
+    """The hour window asked for, or the daylight of the spot when it is omitted."""
+    if de is None or a is None:
+        window = await _daylight(client, lat, lng, day)
+        first, last = window or (0, 23)
+        creneau = f"{first:02d}:00–{last:02d}:00 (jour clair)" if window else "00:00–23:00"
+    else:
+        first, last = max(0, min(int(de), 23)), max(0, min(int(a), 23))
+        creneau = f"{first:02d}:00–{last:02d}:00"
+    return first, last, creneau
+
+
+def _wind_answer(place: dict, day: str, creneau: str, results: list) -> dict:
+    # Hours are local to the SPOT, not to the house. Said once, at the top,
+    # rather than repeated on every model.
+    zone = next((m.pop("fuseau", None) for m in results if m.get("fuseau")), None)
+    for model in results:
+        model.pop("fuseau", None)
+
+    answer = {
+        "spot": place.get("nom"),
+        "lieu": place,
+        "jour": day,
+        "creneau": creneau,
+        "fuseau": zone,
+        "unite": "nœuds (kn)",
+        "modeles": results,
+        "source": SOURCE,
+    }
+    if dispersion := _dispersion(list(results)):
+        answer["dispersion"] = dispersion
+    return answer
+
+
 @mcp.tool()
 async def wind_forecast(spot: str, jour: str | None = None, de: int | None = None,
                         a: int | None = None, modeles: str | None = None) -> dict:
@@ -436,13 +471,7 @@ async def wind_forecast(spot: str, jour: str | None = None, de: int | None = Non
             return {"error": place}
         lat, lng = place["lat"], place["lng"]
 
-        if de is None or a is None:
-            window = await _daylight(client, lat, lng, day)
-            first, last = window or (0, 23)
-            creneau = f"{first:02d}:00–{last:02d}:00 (jour clair)" if window else "00:00–23:00"
-        else:
-            first, last = max(0, min(int(de), 23)), max(0, min(int(a), 23))
-            creneau = f"{first:02d}:00–{last:02d}:00"
+        first, last, creneau = await _creneau(client, lat, lng, day, de, a)
         if first > last:
             return {"error": f"créneau vide : « de » ({first}) est après « a » ({last})."}
 
@@ -450,26 +479,7 @@ async def wind_forecast(spot: str, jour: str | None = None, de: int | None = Non
             _fetch_model(client, lat, lng, day, alias, first, last) for alias in aliases
         ])
 
-    results = list(results)
-    # Hours are local to the SPOT, not to the house. Said once, at the top,
-    # rather than repeated on every model.
-    zone = next((m.pop("fuseau", None) for m in results if m.get("fuseau")), None)
-    for model in results:
-        model.pop("fuseau", None)
-
-    answer = {
-        "spot": place.get("nom"),
-        "lieu": place,
-        "jour": day,
-        "creneau": creneau,
-        "fuseau": zone,
-        "unite": "nœuds (kn)",
-        "modeles": results,
-        "source": SOURCE,
-    }
-    if dispersion := _dispersion(list(results)):
-        answer["dispersion"] = dispersion
-    return answer
+    return _wind_answer(place, day, creneau, list(results))
 
 
 @mcp.tool()

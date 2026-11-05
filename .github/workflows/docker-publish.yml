@@ -27,7 +27,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e .[dev]
-      - run: pytest -q
+      - run: ruff check .
+      - run: pytest --cov --cov-report=term-missing
 
   build:
     runs-on: ubuntu-latest
