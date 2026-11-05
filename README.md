@@ -42,9 +42,9 @@ The MCP endpoint is `/<name>/` (with the trailing slash; `/<name>` answers 307).
 | `error` | import/startup failed - addon skipped, **hub and other addons stay up** |
 | `disabled` | excluded by `ROSETTA_ADDONS` |
 
+Per-addon state is reported on `GET /health`. Modules starting with `_` are shared
 helpers, never mounted. Most addons also run standalone over stdio for local debugging
 (`python -m rosetta.addons.maps`); `courrier`, `git`, `github`, `postier`, `quotas` and `verbatim` do not (no `__main__` block).
-(`python -m rosetta.addons.maps`).
 
 An addon with `identity = "user"` holds per-user credentials server-side, keyed on the
 caller's username; machine tokens are refused on its path. Its enrolment routes sit
