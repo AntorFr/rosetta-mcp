@@ -1,7 +1,7 @@
 # Rosetta — architecture
 
 Status of this file: the *Organs*, *Security* and *Deployment* sections describe the code
-as it is after the `rosetta-qualite` cleanup (v0.29.0); `AD-n` entries are decisions, the
+as it is after the `rosetta-qualite` cleanup (v0.30.0); `AD-n` entries are decisions, the
 first ones taken by the quality epic; the `AD-doc-n` of *Durable decisions from the
 logbook* are the choices that the retired `.agent/status.md` taught and the code still
 shows.
