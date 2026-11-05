@@ -62,6 +62,6 @@ select = ["E", "F", "W", "I", "B", "S110", "S112", "SIM105"]
 source = ["src/rosetta"]
 
 [tool.coverage.report]
-# Floor = measured total on the full suite (85.23%, 382 tests), rounded down, measured 2026-11-05.
+# Floor = measured total on the full suite (85.78%, 457 tests), rounded down, measured 2026-11-05.
 # It follows the measure: raise it when coverage rises, never invent a target.
 fail_under = 85
