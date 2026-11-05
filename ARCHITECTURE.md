@@ -83,3 +83,22 @@ visible change the operator owns.
 
 - Rewriting addons for style: risk without benefit, contradicts I-4.
 - Adding features found missing during the cleanup: out of scope, go to recommendations.
+
+### AD-recommandations-1 — Shape and sources of `docs/recommandations.md`
+One entry per finding, each with the same five parts: **Finding** (what is observed and
+where: file and line, or workflow step, as of the version audited), **Why it matters**,
+**Options** (at least two, one of which is "leave as is" when that is a real choice, each
+with its cost and what it changes for the operator), **Recommendation** (one option, with
+the reason), **Status** (`open`, then `accepted` or `declined` with the reason, written
+later by the operator's decision). The seven subjects named by the slice are mandatory:
+personal contacts in default User-Agents, the undocumented `quotas` endpoint, unpinned
+`yt-dlp`, base image not pinned by digest, Actions pinned by tag, mypy, splitting
+`google.py` and the other large modules. Added to them: every finding carried by the
+reviews of the earlier slices (ignored lint findings whose fix would change behaviour,
+AD-outillage-1; helper families left un-extracted, AD-nettoyage-2; claims the
+documentation could not confirm, AD-doc-1), found by reading those reviews on the epic
+branch's task records. Entries are ordered by the operator's cost of deciding, cheapest
+first, and the file opens with a table of contents listing id, subject and recommended
+option. The slice writes the file only: no entry is applied, and `src/`, `Dockerfile` and
+`.github/` stay untouched (AD-7, I-4). Rejected: opening an issue per finding (a pod
+reads only the repo); sorting by severity (nothing here is a defect the epic may fix).
