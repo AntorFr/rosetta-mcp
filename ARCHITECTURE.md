@@ -23,7 +23,9 @@ first ones taken by the quality epic. Later tranches complete it from the code.
   open paths, anonymous catalogue window (`initialize`/`ping`/`tools/list`).
 - `src/rosetta/addons/<name>.py` — one FastMCP server per addon; contract: `mcp`,
   optional `required_env`, `identity`, `extra_routes`, `open_paths`.
-- `src/rosetta/addons/_common.py` — shared helpers (server factory, HTTP client…).
+- `src/rosetta/addons/_common.py` — shared helpers: server factory, `http_client(transport, …)`,
+  `current_subject`/`remote_user`, per-subject store `read_user`/`write_user`, signed OAuth
+  `state` (`state_key`/`sign_state`/`verify_state`/`state_codec`), identity bridge.
 - Persistence: per-subject files, see `docs/donnees.md`.
 - Deployment: multi-stage `Dockerfile`, non-root, port 8200, `HEALTHCHECK /health`;
   image `ghcr.io/antorfr/rosetta-mcp` published by `.github/workflows/docker-publish.yml`;

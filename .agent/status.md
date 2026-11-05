@@ -2,6 +2,18 @@
 
 > MàJ : 2026-11-05
 
+**Epic `rosetta-qualite`, feature `rosetta-qualite-nettoyage` (2026-11-05, ÉCRIT, PAS FUSIONNÉ)** :
+nettoyage sans changement de comportement (`surface.json` inchangé, aucune assertion modifiée). Extraits dans
+`_common.py` : `http_client` (tous les addons, chacun garde son crochet `_transport`), `current_subject` et
+`remote_user`, `read_user`/`write_user` (quotas, withings ; format des fichiers inchangé), `state` OAuth signé de
+google et withings. Restent volontairement à part (AD-nettoyage-1/2) : `state` de github (autre format, invaliderait les
+états en vol), magasins de google et github, `_current_sub` de google (pont d'identité), fuseaux (replis différents),
+pagination (aucune copie). Les dix `except … : pass|continue` sont journalisés en debug ; `ruff check --select
+S110,S112,SIM105 src` est vide (ces règles sont dans `pyproject.toml`). Coupées en helpers privés : trace_pois, marees,
+mail_attachment, wind_forecast, create_app, withings_measures. 428 tests, couverture 85,73 % (plancher 85), `ruff check .` propre.
+Reste : mypy, épinglage des Actions, découpage de `google.py` & co. (recommandation). Piège : un helper partagé reçoit
+le transport en argument, il ne lit pas de global de `_common` (les tests patchent `addon._transport`).
+
 **Epic `rosetta-qualite`, feature `rosetta-qualite-outillage` (2026-11-05, ÉCRIT, PAS FUSIONNÉ)** :
 `ruff check .` propre (jeu `E, F, W, I, B`, `line-length` 178 = plus longue ligne mesurée, 3 `per-file-ignores`
 commentés sur des tests : E731, B905, E741) ; corrections sans effet de comportement (imports, `raise … from`,
