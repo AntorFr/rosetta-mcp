@@ -96,9 +96,14 @@ personal contacts in default User-Agents, the undocumented `quotas` endpoint, un
 `google.py` and the other large modules. Added to them: every finding carried by the
 reviews of the earlier slices (ignored lint findings whose fix would change behaviour,
 AD-outillage-1; helper families left un-extracted, AD-nettoyage-2; claims the
-documentation could not confirm, AD-doc-1), found by reading those reviews on the epic
-branch's task records. Entries are ordered by the operator's cost of deciding, cheapest
-first, and the file opens with a table of contents listing id, subject and recommended
-option. The slice writes the file only: no entry is applied, and `src/`, `Dockerfile` and
+documentation could not confirm, AD-doc-1), found in the three ADs named (on the
+slices' branches until they are merged into the epic) and in the review lines of the
+slices' tasks (`tasks/<id>/discussion.md` of the pilotage store). Each entry carries a cost class for the operator's decision of its
+recommended option: S (a text, config or pin change, no code), M (a bounded code change
+under the existing tests), L (a refactor or a change of behaviour needing its own slice).
+Entries are ordered by that class, S first, within two groups: the seven mandatory
+subjects, then the entries added from the earlier slices' reviews (appended after the
+seven, never reordering them). The file opens with a table of contents listing id,
+subject, cost class and recommended option. The slice writes the file only: no entry is applied, and `src/`, `Dockerfile` and
 `.github/` stay untouched (AD-7, I-4). Rejected: opening an issue per finding (a pod
 reads only the repo); sorting by severity (nothing here is a defect the epic may fix).
