@@ -147,7 +147,9 @@ is reviewed as one; when a tool, route or variable changes on purpose, rewrite i
 `python tests/test_surface.py --write` and review the diff). Four sections, each sorted so the file is stable:
 - **tools** — per addon (every module of `rosetta.addons` not starting with `_`), read
   through the FastMCP instance (`await mcp.list_tools()`): name, `description` (the
-  docstring agents read, AD-5) and `inputSchema`, verbatim.
+  docstring agents read, AD-5) and `inputSchema`. The description goes through
+  `inspect.cleandoc`: Python 3.13 dedents docstrings and 3.12 (the CI) does not, and the
+  snapshot must not depend on the interpreter.
 - **routes** — from `create_app()` (auth off): every top-level route path with its
   methods, every addon `Mount` path, plus each addon's `extra_routes` and `open_paths`
   and its `identity`; the extra routes appear at `/<addon><suffix>`.
