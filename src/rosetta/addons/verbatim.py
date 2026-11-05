@@ -47,6 +47,7 @@ import httpx
 from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger("rosetta.verbatim")
 
 mcp = new_server("verbatim")
 
@@ -183,7 +184,8 @@ async def _texte(client: httpx.AsyncClient, url: str) -> str | None:
             continue
         try:
             seg = await client.get(ligne)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            logger.debug("verbatim: segment %s injoignable: %s", ligne, exc)
             continue
         if seg.status_code == 200:
             morceaux.append(seg.text)

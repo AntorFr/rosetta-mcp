@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import time
@@ -17,6 +18,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import HTMLResponse
 
 from ..auth import current_claims
+
+logger = logging.getLogger("rosetta.common")
 
 TIMEOUT = 15.0
 
@@ -52,7 +55,7 @@ def remote_user(request) -> str | None:
     try:
         value = value.encode("latin-1").decode("utf-8")
     except (UnicodeEncodeError, UnicodeDecodeError):
-        pass
+        logger.debug("Remote-User n'est pas du latin-1 recodé, gardé tel quel")
     # NFC: the same name typed on two keyboards must yield the same key.
     return unicodedata.normalize("NFC", value)
 

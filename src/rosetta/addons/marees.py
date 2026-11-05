@@ -46,6 +46,7 @@ import httpx
 from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger("rosetta.marees")
 
 required_env = ["API_MAREE_KEY"]
 
@@ -215,7 +216,7 @@ def _range(entree: dict) -> dict:
         try:
             out["hauteur_m"] = round(float(hauteur), 2)
         except (TypeError, ValueError):
-            pass
+            logger.debug("marees: hauteur illisible %r, champ omis", hauteur)
     return out
 
 

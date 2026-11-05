@@ -279,7 +279,7 @@ def _shape(code: str, product: dict) -> dict:
             out["nova"] = nova
             _put(out, "nova_libelle", NOVA_LABEL.get(nova))
         except (TypeError, ValueError):
-            pass
+            logger.debug("food: nova_group illisible %r, champ omis", nova)
 
     eco = _clean(product.get("ecoscore_grade"))
     _put(out, "ecoscore", eco.upper() if isinstance(eco, str) else None)

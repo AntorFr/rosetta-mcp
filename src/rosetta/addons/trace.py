@@ -68,6 +68,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger("rosetta.trace")
 
 mcp = new_server("trace")
 
@@ -280,6 +281,7 @@ def _repartition(messages: list) -> tuple[dict, dict, int]:
         try:
             dist = float(row[i_dist])
         except (TypeError, ValueError):
+            logger.debug("trace: distance illisible %r, ligne ignorée", row[i_dist])
             continue
         tags = _tags(str(row[i_tags]))
         highway = tags.get("highway")

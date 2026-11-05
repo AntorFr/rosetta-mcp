@@ -49,7 +49,7 @@ target-version = "py312"
 line-length = 178
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B"]
+select = ["E", "F", "W", "I", "B", "S110", "S112", "SIM105"]
 
 [tool.ruff.lint.per-file-ignores]
 # Existing tests are not edited beyond import order/unused imports (no assertion touched):

@@ -128,7 +128,7 @@ def envoyer_mail(a: str, sujet: str, corps: str, cc: str = "") -> dict | str:
         try:
             client.quit()
         except Exception:
-            pass
+            logger.debug("postier: SMTP quit a échoué", exc_info=True)
     _sent_at.append(time.time())
     logger.info("postier: mail envoyé à %s (sujet: %s)", ", ".join(recipients), sujet)
 

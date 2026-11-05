@@ -57,6 +57,7 @@ from ._common import (
 )
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger("rosetta.withings")
 
 identity = "user"
 
@@ -365,6 +366,7 @@ def _tz() -> tzinfo:
         try:
             return ZoneInfo(name)
         except Exception:
+            logger.debug("withings: fuseau %r inconnu, suivant", name)
             continue
     return timezone.utc
 
@@ -414,7 +416,7 @@ def _local(epoch, tz_name: str | None = None) -> str | None:
         try:
             zone = ZoneInfo(tz_name)
         except Exception:
-            pass
+            logger.debug("withings: fuseau %r inconnu, fuseau maison", tz_name)
     return datetime.fromtimestamp(int(epoch), tz=zone).isoformat()
 
 
