@@ -65,9 +65,10 @@ from urllib.parse import urlencode
 import httpx
 from starlette.responses import JSONResponse, PlainTextResponse
 
-from ._common import new_server
+from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger("rosetta.trace")
 
 mcp = new_server("trace")
 
@@ -92,7 +93,7 @@ _transport = None
 
 
 def _client(timeout: float = ROUTE_TIMEOUT) -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=timeout, transport=_transport)
+    return http_client(_transport, timeout)
 
 
 def _brouter_url() -> str:
@@ -280,6 +281,7 @@ def _repartition(messages: list) -> tuple[dict, dict, int]:
         try:
             dist = float(row[i_dist])
         except (TypeError, ValueError):
+            logger.debug("trace: distance illisible %r, ligne ignorée", row[i_dist])
             continue
         tags = _tags(str(row[i_tags]))
         highway = tags.get("highway")
@@ -531,6 +533,86 @@ def _selector_key(selector: str) -> str:
     return m.group(1) if m else ""
 
 
+def _poi_query(wanted: list, lat: float, lng: float, rayon: int, par_type: int) -> str:
+    """The Overpass QL text: one named set per requested type, each with its own
+    `out` limit."""
+    blocks = []
+    for n, t in enumerate(wanted):
+        clauses = "".join(f"{sel}(around:{rayon},{lat},{lng});" for sel in POI_TYPES[t])
+        blocks.append(f"({clauses})->.s{n};.s{n} out center tags {par_type * 5};")
+    return f"[out:json][timeout:25];{''.join(blocks)}"
+
+
+async def _overpass_post(query: str) -> tuple:
+    """POST the query; (decoded JSON, None) or (None, {"error": …}) in the caller's words."""
+    async with _client() as client:
+        try:
+            r = await client.post(
+                _overpass_url(),
+                content=query.encode("utf-8"),
+                headers={"Content-Type": "text/plain; charset=utf-8",
+                         "User-Agent": os.environ.get("OVERPASS_USER_AGENT",
+                                                      "rosetta-mcp/trace (contact@antor.fr)")},
+            )
+        except httpx.HTTPError as exc:
+            return None, {"error": f"Overpass injoignable ({type(exc).__name__})."}
+        if r.status_code == 429 or r.status_code == 504:
+            return None, {"error": "Overpass est saturé (quota partagé par IP) : réessayer dans quelques minutes."}
+        if r.status_code != 200:
+            return None, {"error": f"Overpass : HTTP {r.status_code}."}
+        try:
+            return r.json(), None
+        except ValueError:
+            return None, {"error": "Overpass : réponse illisible."}
+
+
+def _poi_item(el: dict, cle: str, plat, plng, lat: float, lng: float) -> dict:
+    tags = el.get("tags") or {}
+    item = {
+        "latlng": f"{plat},{plng}",
+        "distance_m": round(_haversine((lat, lng), (plat, plng))),
+        "osm": cle,
+    }
+    # The classifying tag, so the caller knows what the thing IS without
+    # re-deriving it from the selector that found it.
+    for key in ("amenity", "tourism", "leisure", "natural", "historic", "shop", "route", "man_made"):
+        if key in tags:
+            item["genre"] = f"{key}={tags[key]}"
+            break
+    porte = {k: tags[k] for k in POI_TAGS if k in tags}
+    if porte:  # an unnamed bench carries nothing; an empty dict is noise
+        item["tags_osm"] = porte
+    return item
+
+
+def _poi_groups(data: dict, wanted: list, lat: float, lng: float, par_type: int) -> dict:
+    """Elements sorted back into the requested types, nearest first, capped."""
+    # Which requested type each element belongs to, so the answer is grouped
+    # the way it was asked for.
+    selectors = {t: [_selector_key(sel) for sel in POI_TYPES[t]] for t in wanted}
+    groupes: dict[str, list] = {t: [] for t in wanted}
+    vus = set()
+    for el in data.get("elements") or []:
+        centre = el.get("center") or {}
+        plat, plng = el.get("lat", centre.get("lat")), el.get("lon", centre.get("lon"))
+        if plat is None or plng is None:
+            continue
+        cle = f"{el.get('type')}/{el.get('id')}"
+        if cle in vus:  # a set can match two selectors of the same type
+            continue
+        vus.add(cle)
+        tags = el.get("tags") or {}
+        item = _poi_item(el, cle, plat, plng, lat, lng)
+        for t, keys in selectors.items():
+            if any(k in tags for k in keys):
+                groupes[t].append(item)
+                break
+    for t in groupes:
+        groupes[t].sort(key=lambda p: p["distance_m"])
+        groupes[t] = groupes[t][:par_type]
+    return groupes
+
+
 @mcp.tool()
 async def trace_pois(autour: str, types: str = "eau,vue,abri", rayon_m: int = 1000,
                      max_results: int = 30) -> dict:
@@ -571,68 +653,11 @@ async def trace_pois(autour: str, types: str = "eau,vue,abri", rayon_m: int = 10
     # came back as benches only, with the two types that mattered crowded out
     # (measured around Vannes, 2026-08-04). Overpass emits in its own order, so
     # the set is fetched wider than needed and sorted by distance below.
-    blocks = []
-    for n, t in enumerate(wanted):
-        clauses = "".join(f"{sel}(around:{rayon},{lat},{lng});" for sel in POI_TYPES[t])
-        blocks.append(f"({clauses})->.s{n};.s{n} out center tags {par_type * 5};")
-    query = f"[out:json][timeout:25];{''.join(blocks)}"
-
-    async with _client() as client:
-        try:
-            r = await client.post(
-                _overpass_url(),
-                content=query.encode("utf-8"),
-                headers={"Content-Type": "text/plain; charset=utf-8",
-                         "User-Agent": os.environ.get("OVERPASS_USER_AGENT",
-                                                      "rosetta-mcp/trace (contact@antor.fr)")},
-            )
-        except httpx.HTTPError as exc:
-            return {"error": f"Overpass injoignable ({type(exc).__name__})."}
-        if r.status_code == 429 or r.status_code == 504:
-            return {"error": "Overpass est saturé (quota partagé par IP) : réessayer dans quelques minutes."}
-        if r.status_code != 200:
-            return {"error": f"Overpass : HTTP {r.status_code}."}
-        try:
-            data = r.json()
-        except ValueError:
-            return {"error": "Overpass : réponse illisible."}
-
-    # Which requested type each element belongs to, so the answer is grouped
-    # the way it was asked for.
-    selectors = {t: [_selector_key(sel) for sel in POI_TYPES[t]] for t in wanted}
-    groupes: dict[str, list] = {t: [] for t in wanted}
-    vus = set()
-    for el in data.get("elements") or []:
-        centre = el.get("center") or {}
-        plat, plng = el.get("lat", centre.get("lat")), el.get("lon", centre.get("lon"))
-        if plat is None or plng is None:
-            continue
-        cle = f"{el.get('type')}/{el.get('id')}"
-        if cle in vus:  # a set can match two selectors of the same type
-            continue
-        vus.add(cle)
-        tags = el.get("tags") or {}
-        item = {
-            "latlng": f"{plat},{plng}",
-            "distance_m": round(_haversine((lat, lng), (plat, plng))),
-            "osm": cle,
-        }
-        # The classifying tag, so the caller knows what the thing IS without
-        # re-deriving it from the selector that found it.
-        for key in ("amenity", "tourism", "leisure", "natural", "historic", "shop", "route", "man_made"):
-            if key in tags:
-                item["genre"] = f"{key}={tags[key]}"
-                break
-        porte = {k: tags[k] for k in POI_TAGS if k in tags}
-        if porte:  # an unnamed bench carries nothing; an empty dict is noise
-            item["tags_osm"] = porte
-        for t, keys in selectors.items():
-            if any(k in tags for k in keys):
-                groupes[t].append(item)
-                break
-    for t in groupes:
-        groupes[t].sort(key=lambda p: p["distance_m"])
-        groupes[t] = groupes[t][:par_type]
+    query = _poi_query(wanted, lat, lng, rayon, par_type)
+    data, erreur = await _overpass_post(query)
+    if erreur:
+        return erreur
+    groupes = _poi_groups(data, wanted, lat, lng, par_type)
     return {
         "centre": f"{lat},{lng}",
         "rayon_m": rayon,

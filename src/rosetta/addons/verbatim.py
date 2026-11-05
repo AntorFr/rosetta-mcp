@@ -44,9 +44,10 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import httpx
 
-from ._common import TIMEOUT, new_server
+from ._common import http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger("rosetta.verbatim")
 
 mcp = new_server("verbatim")
 
@@ -79,7 +80,7 @@ _cache: dict[tuple, tuple[float, dict]] = {}
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport, follow_redirects=True)
+    return http_client(_transport, follow_redirects=True)
 
 
 # ── la plateforme ──────────────────────────────────────────────────────────
@@ -183,7 +184,8 @@ async def _texte(client: httpx.AsyncClient, url: str) -> str | None:
             continue
         try:
             seg = await client.get(ligne)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            logger.debug("verbatim: segment %s injoignable: %s", ligne, exc)
             continue
         if seg.status_code == 200:
             morceaux.append(seg.text)

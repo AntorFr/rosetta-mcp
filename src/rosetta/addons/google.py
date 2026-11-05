@@ -43,13 +43,10 @@ Tool descriptions are in French - runtime UX for the household agents.
 
 import asyncio
 import base64
-import hashlib
-import hmac
 import json
 import logging
 import os
 import re
-import secrets
 import time
 import unicodedata
 from email.message import EmailMessage
@@ -59,7 +56,16 @@ import httpx
 from starlette.responses import HTMLResponse, RedirectResponse
 
 from ..auth import current_claims
-from ._common import TIMEOUT, bridge_learn, bridge_resolve, dig, enrol_page, new_server, remote_user
+from ._common import (
+    bridge_learn,
+    bridge_resolve,
+    dig,
+    enrol_page,
+    http_client,
+    new_server,
+    remote_user,
+    state_codec,
+)
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -97,7 +103,7 @@ _transport = None
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport)
+    return http_client(_transport)
 
 
 # --------------------------------------------------------------------------
@@ -466,45 +472,9 @@ async def mail_thread(thread_id: str, body_limit: int = THREAD_BODY_LIMIT) -> di
     return out
 
 
-@mcp.tool()
-async def mail_attachment(message_id: str, attachment_id: str | None = None,
-                          raw: bool = False) -> dict:
-    """Lit ou rapatrie les pièces jointes d'un mail Gmail.
-
-    - Sans `attachment_id` : liste les pièces jointes du message (nom, type, taille, id).
-    - Avec `attachment_id` (défaut) : rend la pièce en TEXTE quand c'est possible
-      (texte brut, CSV/JSON, PDF) — pour la LIRE. Un binaire opaque (image, archive)
-      ne renvoie que ses métadonnées, jamais les octets bruts.
-    - Avec `raw=True` : rapatrie la pièce au FORMAT NATIF (octets en base64), pour la
-      STOCKER telle quelle (mémoire, pièce jointe d'une fiche). Plafonné en taille.
-
-    message_id : l'id du message (donné par mail_search).
-    attachment_id : l'id de la pièce (donné par ce même outil en mode liste).
-    raw : True pour récupérer les octets bruts au lieu d'une transcription texte.
-    """
-    auth = await _authed()
-    if isinstance(auth, dict):
-        return auth
-    _, headers = auth
-
-    async with _client() as http:
-        meta = await http.get(f"{GMAIL}/messages/{message_id}",
-                              params={"format": "full"}, headers=headers)
-        meta_data = meta.json()
-        if meta.status_code != 200:
-            return {"error": dig(meta_data, "error", "message", default=f"HTTP {meta.status_code}")}
-        attachments = _list_attachments(meta_data.get("payload") or {})
-
-        if not attachment_id:
-            return {"message_id": message_id, "attachments": attachments}
-
-        info = next((a for a in attachments if a["attachment_id"] == attachment_id), None)
-        r = await http.get(
-            f"{GMAIL}/messages/{message_id}/attachments/{attachment_id}", headers=headers)
-        data = r.json()
-    if r.status_code != 200:
-        return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
-
+def _attachment_out(data: dict, message_id: str, attachment_id: str, info: dict | None,
+                    raw: bool) -> dict:
+    """The tool's answer from the downloaded attachment: base64 bytes (raw) or text."""
     content = base64.urlsafe_b64decode(data["data"] + "=" * (-len(data["data"]) % 4))
     mime = (info or {}).get("mime_type") or ""
     filename = (info or {}).get("filename")
@@ -547,6 +517,48 @@ async def mail_attachment(message_id: str, attachment_id: str | None = None,
                        f"{filename or 'sans nom'}) — {len(content)} octets ; "
                        f"utiliser raw=True pour le rapatrier au format natif.")
     return out
+
+
+@mcp.tool()
+async def mail_attachment(message_id: str, attachment_id: str | None = None,
+                          raw: bool = False) -> dict:
+    """Lit ou rapatrie les pièces jointes d'un mail Gmail.
+
+    - Sans `attachment_id` : liste les pièces jointes du message (nom, type, taille, id).
+    - Avec `attachment_id` (défaut) : rend la pièce en TEXTE quand c'est possible
+      (texte brut, CSV/JSON, PDF) — pour la LIRE. Un binaire opaque (image, archive)
+      ne renvoie que ses métadonnées, jamais les octets bruts.
+    - Avec `raw=True` : rapatrie la pièce au FORMAT NATIF (octets en base64), pour la
+      STOCKER telle quelle (mémoire, pièce jointe d'une fiche). Plafonné en taille.
+
+    message_id : l'id du message (donné par mail_search).
+    attachment_id : l'id de la pièce (donné par ce même outil en mode liste).
+    raw : True pour récupérer les octets bruts au lieu d'une transcription texte.
+    """
+    auth = await _authed()
+    if isinstance(auth, dict):
+        return auth
+    _, headers = auth
+
+    async with _client() as http:
+        meta = await http.get(f"{GMAIL}/messages/{message_id}",
+                              params={"format": "full"}, headers=headers)
+        meta_data = meta.json()
+        if meta.status_code != 200:
+            return {"error": dig(meta_data, "error", "message", default=f"HTTP {meta.status_code}")}
+        attachments = _list_attachments(meta_data.get("payload") or {})
+
+        if not attachment_id:
+            return {"message_id": message_id, "attachments": attachments}
+
+        info = next((a for a in attachments if a["attachment_id"] == attachment_id), None)
+        r = await http.get(
+            f"{GMAIL}/messages/{message_id}/attachments/{attachment_id}", headers=headers)
+        data = r.json()
+    if r.status_code != 200:
+        return {"error": dig(data, "error", "message", default=f"HTTP {r.status_code}")}
+
+    return _attachment_out(data, message_id, attachment_id, info, raw)
 
 
 async def _compose(http, headers, body: str, to: str | None, subject: str | None,
@@ -1283,37 +1295,7 @@ async def calendar_delete(event_id: str, calendar_id: str = "primary",
 # Enrolment (browser flow, guarded by the ingress forwardAuth)
 # --------------------------------------------------------------------------
 
-def _state_key() -> bytes:
-    path = os.path.join(_data_dir(), "state.key")
-    try:
-        with open(path, "rb") as f:
-            return f.read()
-    except FileNotFoundError:
-        key = secrets.token_bytes(32)
-        os.makedirs(_data_dir(), exist_ok=True)
-        with open(path, "wb") as f:
-            f.write(key)
-        os.chmod(path, 0o600)
-        return key
-
-
-def _sign_state(sub: str) -> str:
-    payload = f"{int(time.time()) + 600}.{sub}"
-    sig = hmac.new(_state_key(), payload.encode(), hashlib.sha256).hexdigest()
-    return base64.urlsafe_b64encode(f"{payload}.{sig}".encode()).decode()
-
-
-def _verify_state(state: str) -> str | None:
-    try:
-        expiry, sub, sig = base64.urlsafe_b64decode(state.encode()).decode().split(".", 2)
-        payload = f"{expiry}.{sub}"
-        if not hmac.compare_digest(sig, hmac.new(_state_key(), payload.encode(), hashlib.sha256).hexdigest()):
-            return None
-        if time.time() > int(expiry):
-            return None
-        return sub
-    except Exception:
-        return None
+_sign_state, _verify_state = state_codec(_data_dir)
 
 
 def _page(glyph: str, title: str, message: str, status: int = 200) -> HTMLResponse:

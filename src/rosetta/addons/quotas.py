@@ -88,7 +88,6 @@ Tool descriptions are in French - runtime UX for the household agents.
 """
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -100,7 +99,15 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from ..auth import MACHINE_SUB_PREFIX, current_claims
-from ._common import TIMEOUT, enrol_page, new_server, remote_user
+from ._common import (
+    current_subject,
+    enrol_page,
+    http_client,
+    new_server,
+    read_user,
+    remote_user,
+    write_user,
+)
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -142,7 +149,7 @@ _transport = None
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport)
+    return http_client(_transport)
 
 
 # --------------------------------------------------------------------------
@@ -178,15 +185,7 @@ def _user_file(sub: str) -> str:
     return os.path.join(_data_dir(), "users", f"{_safe(sub)}.json")
 
 
-def _current_sub() -> str | None:
-    claims = current_claims.get()
-    if not claims:
-        return None
-    # Same key as google and withings: Authelia access tokens may carry an
-    # opaque `sub`, so the username claim wins, NFC-normalized to match what
-    # enrolment filed it under.
-    value = claims.get("preferred_username") or claims.get("sub")
-    return unicodedata.normalize("NFC", str(value)) if value else None
+_current_sub = current_subject  # cf. _common
 
 
 def _is_machine() -> bool:
@@ -247,23 +246,11 @@ def _target_sub() -> str | dict:
 
 
 def _read_user(sub: str) -> dict:
-    try:
-        with open(_user_file(sub)) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+    return read_user(_user_file(sub), {})
 
 
 def _write_user(sub: str, record: dict) -> None:
-    """Atomic: the refresh token may rotate, and a half-written file is a lost
-    credential - there is no way to re-derive it but another browser login."""
-    os.makedirs(os.path.join(_data_dir(), "users"), exist_ok=True)
-    path = _user_file(sub)
-    tmp = f"{path}.tmp"
-    with open(tmp, "w") as f:
-        json.dump(record, f)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    write_user(_user_file(sub), record)
 
 
 def _enrol_hint(sub: str, provider: str) -> str:

@@ -39,7 +39,7 @@ import httpx
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
-from ._common import new_server
+from ._common import http_client, new_server
 from .github import _access_token, _api, _current_sub, _slug
 
 mcp = new_server("git")
@@ -56,10 +56,10 @@ _transport = None  # crochet de test : les tests injectent un httpx.MockTranspor
 
 
 def _client(read: float, write: float = 30.0, redirects: bool = False) -> httpx.AsyncClient:
-    return httpx.AsyncClient(
-        timeout=httpx.Timeout(30.0, read=read, write=write),
+    return http_client(
+        _transport,
+        httpx.Timeout(30.0, read=read, write=write),
         follow_redirects=redirects,
-        transport=_transport,
     )
 
 # A ref update whose new value is all zeros is a deletion.

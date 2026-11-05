@@ -56,14 +56,12 @@ import logging
 import os
 import re
 import time
-import unicodedata
 from urllib.parse import urlencode
 
 import httpx
 from starlette.responses import RedirectResponse
 
-from ..auth import current_claims
-from ._common import TIMEOUT, dig, enrol_page, new_server, remote_user
+from ._common import current_subject, dig, enrol_page, http_client, new_server, remote_user
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -81,7 +79,7 @@ _transport = None  # crochet de test : les tests injectent un httpx.MockTranspor
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport)
+    return http_client(_transport)
 
 
 def _page(glyph, title, message, status=200):
@@ -113,12 +111,7 @@ def _oauth_client() -> dict | str:
     return {"client_id": cid, "client_secret": secret}
 
 
-def _current_sub() -> str | None:
-    claims = current_claims.get()
-    if not claims:
-        return None
-    value = claims.get("preferred_username") or claims.get("sub")
-    return unicodedata.normalize("NFC", str(value)) if value else None
+_current_sub = current_subject  # cf. _common
 
 
 _token_cache: dict[str, tuple[str, float]] = {}
