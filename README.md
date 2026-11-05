@@ -121,14 +121,14 @@ gateway meant to be its only caller.
 ## Configuration
 
 Everything is read from the environment. "Required" means the hub or the addon does not
-work without it: the hub-wide ones stop the start, an addon's `required_env` mounts that
-addon `degraded` and nothing else.
+work without it. The hub does not refuse to start on a missing one; an addon's
+`required_env` mounts that addon `degraded` and nothing else.
 
 | Variable | Scope | Required | Default | Meaning |
 |---|---|---|---|---|
 | `ROSETTA_AUTH` | hub | no | `oidc` | `off` disables auth (local dev only) |
-| `ROSETTA_ISSUER` | hub | yes, unless auth is off | none | OIDC issuer (token `iss`) |
-| `ROSETTA_EXTERNAL_URL` | hub, `git`, `github`, `google`, `quotas`, `trace`, `withings` | yes, unless auth is off | none | public URL of the hub (RFC 9728 metadata, OAuth callbacks, enrolment links) |
+| `ROSETTA_ISSUER` | hub | yes (unset, no default: tokens cannot be validated without it) | none | OIDC issuer (token `iss`) |
+| `ROSETTA_EXTERNAL_URL` | hub, `git`, `github`, `google`, `quotas`, `trace`, `withings` | yes (unset, no default: metadata, callbacks and links are unusable without it) | none | public URL of the hub (RFC 9728 metadata, OAuth callbacks, enrolment links) |
 | `ROSETTA_AUDIENCE` | hub | no | `ROSETTA_EXTERNAL_URL` | accepted token `aud`; a token audienced to `<audience>/<addon>` is accepted only on that addon |
 | `ROSETTA_JWKS_URI` | hub | no | `<issuer>/jwks.json` | JWKS endpoint override |
 | `ROSETTA_TRUSTED_ISSUERS` | hub | no | empty | extra issuers accepted for validation only, comma-separated, each `<issuer>` or `<issuer>=<jwks_uri>` |
@@ -189,8 +189,8 @@ ROSETTA_AUTH=off .venv/bin/uvicorn rosetta.main:app --port 8200   # local start 
 ```
 
 Python ≥ 3.12 is required (`pyproject.toml`). Coverage fails below `fail_under` in
-`pyproject.toml`; lint ignores are listed there with their reason. `ROSETTA_AUTH=off` lifts
-the need for `ROSETTA_ISSUER` and `ROSETTA_EXTERNAL_URL`. With no secrets set, `/health`
+`pyproject.toml`; lint ignores are listed there with their reason. `ROSETTA_AUTH=off` disables
+token validation, for local development only. With no secrets set, `/health`
 answers `degraded` and names the addons whose variables are missing: the expected state of a
 bare local start. `tests/test_surface.py` pins the tools, routes, health and environment
 variables read by the code against `tests/surface.json`.
