@@ -120,7 +120,7 @@ gateway meant to be its only caller.
 
 ## Configuration
 
-Everything is read from the environment. "Required" means the hub or the addon does not
+Everything is read from the environment (with `ROSETTA_AUTH=off`, `ROSETTA_ISSUER` and `ROSETTA_EXTERNAL_URL` are not needed to start). "Required" means the hub or the addon does not
 work without it. The hub does not refuse to start on a missing one; an addon's
 `required_env` mounts that addon `degraded` and nothing else.
 
@@ -188,12 +188,20 @@ python3 -m venv .venv
 ROSETTA_AUTH=off .venv/bin/uvicorn rosetta.main:app --port 8200   # local start (not CI)
 ```
 
+To run it as the container (auth off, no secrets, local only):
+
+```bash
+docker build -t rosetta-mcp .
+docker run --rm -p 8200:8200 -e ROSETTA_AUTH=off rosetta-mcp   # then: curl localhost:8200/health
+```
+
 Python ≥ 3.12 is required (`pyproject.toml`). Coverage fails below `fail_under` in
 `pyproject.toml`; lint ignores are listed there with their reason. `ROSETTA_AUTH=off` disables
 token validation, for local development only. With no secrets set, `/health`
 answers `degraded` and names the addons whose variables are missing: the expected state of a
 bare local start. `tests/test_surface.py` pins the tools, routes, health and environment
-variables read by the code against `tests/surface.json`.
+variables read by the code against `tests/surface.json`; after an intended change, rewrite the snapshot with
+`python tests/test_surface.py --write` and review the diff.
 
 ## Deployment
 

@@ -1,5 +1,9 @@
 # Rosetta — who it serves, needs, journeys
 
+> Scope: this page records the needs and journeys of the quality epic, done at v0.29.0–0.30.0.
+> It is history, not a description of current behaviour (for that: `README.md`, `docs/addons.md`).
+> `docs/recommandations.md`, cited below, belongs to a later slice and does not exist yet.
+
 Rosetta is a modular MCP hub (see `ARCHITECTURE.md`). This document covers the
 **quality epic** `rosetta-qualite`: bringing the repository to the SDLC chain
 standard **without any functional change**. Product behaviour is described in

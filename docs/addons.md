@@ -30,13 +30,13 @@ Les boîtes mail propres de la maison (OVH Zimbra, `@<MAIL_DOMAIN>`) : lecture, 
 
 | Outil | Rôle |
 |---|---|
-| `courrier_alias_creer` | Crée un alias jetable `<nom_local>@<domaine>` vers la boîte de |
-| `courrier_alias_liste` | Liste les alias jetables qui pointent vers la boîte @<domaine familial> |
+| `courrier_alias_creer` | Crée un alias jetable `<nom_local>@<domaine>` vers la boîte de l'appelant (anti-spam : un alias par marchand, à supprimer au premier abus via courrier_alias_supprimer). |
+| `courrier_alias_liste` | Liste les alias jetables qui pointent vers la boîte @<domaine familial> de l'appelant. |
 | `courrier_alias_supprimer` | Supprime un alias jetable de l'appelant (le marchand a vendu l'adresse ? |
-| `courrier_brouillon` | Dépose un BROUILLON dans la boîte @<domaine familial> de l'appelant — |
-| `courrier_dossiers` | Liste les dossiers de la boîte PERSONNELLE @<domaine familial> de |
-| `courrier_lire` | Lit un message complet (en-têtes + corps texte) par son `uid`, dans la |
-| `courrier_recherche` | Cherche dans la boîte PERSONNELLE @<domaine familial> de l'appelant — la |
+| `courrier_brouillon` | Dépose un BROUILLON dans la boîte @<domaine familial> de l'appelant — PAS dans Gmail (pour Gmail : `mail_draft` de l'addon `google`). |
+| `courrier_dossiers` | Liste les dossiers de la boîte PERSONNELLE @<domaine familial> de l'appelant, la messagerie de la maison (INBOX, Sent, Drafts…). |
+| `courrier_lire` | Lit un message complet (en-têtes + corps texte) par son `uid`, dans la boîte @<domaine familial> — pas Gmail. |
+| `courrier_recherche` | Cherche dans la boîte PERSONNELLE @<domaine familial> de l'appelant — la messagerie de la maison, PAS Gmail (Gmail = `mail_search` de l'addon `google`). |
 
 ## food
 
@@ -106,16 +106,16 @@ Gmail et Google Agenda au nom de l'appelant : lecture, brouillons, envoi, évén
 | Outil | Rôle |
 |---|---|
 | `calendar_create` | Crée un événement dans un agenda (sur demande explicite de l'utilisateur). |
-| `calendar_delete` | SUPPRIME un événement d'un agenda — irréversible : confirmation |
+| `calendar_delete` | SUPPRIME un événement d'un agenda — irréversible : confirmation explicite de l'utilisateur requise en amont. |
 | `calendar_events` | Liste les événements entre deux instants, sur un ou plusieurs agendas. |
 | `calendar_list` | Liste les agendas du compte : identifiant, nom, et si on peut y écrire. |
 | `calendar_update` | Modifie un événement existant (déplacement, renommage…) — confirmation utilisateur requise en amont. |
 | `mail_attachment` | Lit ou rapatrie les pièces jointes d'un mail Gmail. |
-| `mail_draft` | Dépose un BROUILLON dans GMAIL — cet outil n'envoie rien : le brouillon |
+| `mail_draft` | Dépose un BROUILLON dans GMAIL — cet outil n'envoie rien : le brouillon attend sa relecture (l'utilisateur l'envoie depuis Gmail, ou via `mail_send(draft_id=…)` après son feu vert explicite). |
 | `mail_draft_update` | Corrige un BROUILLON existant — cet outil n'envoie rien, et rien n'est supprimé. |
 | `mail_drafts` | Liste les brouillons Gmail, ou relit l'un d'eux en entier. |
 | `mail_search` | Recherche dans GMAIL (syntaxe Gmail : from:, subject:, after:, is:unread…). |
-| `mail_send` | ENVOIE un mail via GMAIL — réel, immédiat, irréversible : le destinataire |
+| `mail_send` | ENVOIE un mail via GMAIL — réel, immédiat, irréversible : le destinataire le reçoit. |
 | `mail_thread` | Lit un fil GMAIL complet, rendu lisible (expéditeur, date, texte de chaque message). |
 
 ## maps
@@ -161,7 +161,7 @@ Vent heure par heure pour un spot de voile, en nœuds (Open-Meteo), plusieurs mo
 
 | Outil | Rôle |
 |---|---|
-| `wind_forecast` | Prévisions de VENT heure par heure pour un spot, en NŒUDS — vent moyen, |
+| `wind_forecast` | Prévisions de VENT heure par heure pour un spot, en NŒUDS — vent moyen, rafale, ratio de rafale et direction (d'où il vient). |
 | `wind_spots` | Les spots de voile enregistrés, avec leurs coordonnées. |
 
 ## postier
@@ -252,6 +252,6 @@ Données Withings de l'appelant : activité, mesures corporelles, sommeil, séan
 |---|---|
 | `withings_activity` | Activité quotidienne Withings : pas, distance, calories, fréquence cardiaque. |
 | `withings_devices` | Les appareils Withings du compte : type, modèle, niveau de pile, dernière synchro. |
-| `withings_measures` | Mesures Withings : poids, composition corporelle, tension, ECG, SpO2… |
+| `withings_measures` | Mesures Withings : poids, composition corporelle, tension, ECG, SpO2… Chaque pesée (ou prise de tension) rend un GROUPE de mesures prises ensemble — poids, masse grasse, masse musculaire, eau… — daté, avec sa valeur réelle et son unité. |
 | `withings_sleep` | Sommeil Withings : une synthèse par nuit (phases, score, respiration, ronflement). |
 | `withings_workouts` | Séances de sport enregistrées par Withings (marche, course, vélo, natation…). |
