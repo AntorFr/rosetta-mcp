@@ -33,6 +33,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "ruff>=0.6",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -40,3 +41,18 @@ packages = ["src/rosetta"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+# Longest line measured in src and tests: 178 characters (tests/test_filet_mutations.py).
+line-length = 178
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# Existing tests are not edited beyond import order/unused imports (no assertion touched):
+# these style findings stay as written. Fixing them would rewrite test code.
+"tests/test_meteo.py" = ["E731"]      # throwaway lambda helper in a fixture builder
+"tests/test_trace.py" = ["B905"]      # zip() of two equal-length lists; strict= would be new behaviour in a test
+"tests/test_verbatim.py" = ["E741"]   # short loop variable `l` in test comprehensions

@@ -422,8 +422,8 @@ async def verbatim(url: str, langues: str = "fr,en", depuis: int = 0,
 
     out = {k: v for k, v in fiche.items() if k != "lignes"}
     out["lignes"] = [
-        {"t": l["t"], "a": _stamp(l["t"]), "texte": l["texte"], "lien": _lien(lien_de, l["t"])}
-        for l in tranche
+        {"t": ln["t"], "a": _stamp(ln["t"]), "texte": ln["texte"], "lien": _lien(lien_de, ln["t"])}
+        for ln in tranche
     ]
     out["total"] = len(toutes)
     out["depuis"] = depuis
@@ -462,7 +462,7 @@ async def verbatim_cherche(url: str, sujet: str, n: int = 8,
         return {"error": "sujet trop court : donne au moins un mot de trois lettres."}
 
     fenetre = 3
-    plies = [_sans_accents(l["texte"]) for l in toutes]
+    plies = [_sans_accents(ln["texte"]) for ln in toutes]
     trouves = []
     for i in range(len(toutes)):
         passage = " ".join(plies[i:i + fenetre])
@@ -473,7 +473,7 @@ async def verbatim_cherche(url: str, sujet: str, n: int = 8,
             "i": i,
             "score": len(touches) + len(touches) / len(mots),
             "t": toutes[i]["t"],
-            "texte": " ".join(l["texte"] for l in toutes[i:i + fenetre]),
+            "texte": " ".join(ln["texte"] for ln in toutes[i:i + fenetre]),
         })
 
     # Deux fenêtres voisines décrivent le même passage : on garde la meilleure

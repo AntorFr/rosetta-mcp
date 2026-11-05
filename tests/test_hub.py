@@ -1,10 +1,9 @@
 """Loader isolation + health + MCP roundtrip, auth disabled."""
 
-import json
-
-from starlette.testclient import TestClient
 
 import fake_addons
+from starlette.testclient import TestClient
+
 from rosetta.main import create_app
 
 MCP_HEADERS = {

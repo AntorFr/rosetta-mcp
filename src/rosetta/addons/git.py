@@ -123,9 +123,9 @@ def _parse_commands(buffer: bytes) -> tuple[list[tuple[str, str, str]], bool]:
     while i + 4 <= len(buffer):
         try:
             length = int(buffer[i:i + 4], 16)
-        except ValueError:
+        except ValueError as exc:
             # Not pkt-line at all: refuse rather than guess (fail-closed).
-            raise ValueError("corps git-receive-pack illisible (pkt-line attendu)")
+            raise ValueError("corps git-receive-pack illisible (pkt-line attendu)") from exc
         if length == 0:  # flush-pkt: end of the command list
             return commands, True
         if length < 4 or i + length > len(buffer):

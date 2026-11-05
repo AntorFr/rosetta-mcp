@@ -65,7 +65,7 @@ from urllib.parse import urlencode
 import httpx
 from starlette.responses import JSONResponse, PlainTextResponse
 
-from ._common import TIMEOUT, new_server
+from ._common import new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -290,7 +290,9 @@ def _repartition(messages: list) -> tuple[dict, dict, int]:
         surface = tags.get("surface")
         label = SURFACES_FR.get(surface, surface) if surface else "inconnu"
         surfaces[label] = surfaces.get(label, 0) + dist
-    rnd = lambda d: {k: round(v) for k, v in sorted(d.items(), key=lambda kv: -kv[1]) if round(v)}
+    def rnd(d):
+        return {k: round(v) for k, v in sorted(d.items(), key=lambda kv: -kv[1]) if round(v)}
+
     return rnd(surfaces), rnd(voies), round(steps)
 
 
