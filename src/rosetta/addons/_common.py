@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import os
+import secrets
+import time
 import unicodedata
 
 import httpx
@@ -208,3 +213,54 @@ def write_user(path: str, record: dict) -> None:
         json.dump(record, f)
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
+
+
+# --- `state` OAuth signé (google, withings) -------------------------------
+# Format `expiry.sub.sig` en base64 url-safe, digest SHA-256 complet, validité 600 s,
+# clé `state.key` (0600) sous le répertoire de données. github garde son propre
+# `state` (format `sub|ts`, digest tronqué, clé distincte) : l'unifier invaliderait
+# les états en vol.
+
+STATE_TTL = 600
+
+
+def state_key(data_dir: str) -> bytes:
+    path = os.path.join(data_dir, "state.key")
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        key = secrets.token_bytes(32)
+        os.makedirs(data_dir, exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(key)
+        os.chmod(path, 0o600)
+        return key
+
+
+def sign_state(sub: str, key: bytes) -> str:
+    payload = f"{int(time.time()) + STATE_TTL}.{sub}"
+    sig = hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}.{sig}".encode()).decode()
+
+
+def verify_state(state: str, key: bytes) -> str | None:
+    try:
+        expiry, sub, sig = base64.urlsafe_b64decode(state.encode()).decode().split(".", 2)
+        payload = f"{expiry}.{sub}"
+        if not hmac.compare_digest(sig, hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()):
+            return None
+        if time.time() > int(expiry):
+            return None
+        return sub
+    except Exception:
+        return None
+
+
+def state_codec(data_dir):
+    """`(sign, verify)` d'un addon ; `data_dir` est appelé à chaque usage (l'addon
+    garde son propre `_data_dir`, que les tests redirigent)."""
+    return (
+        lambda sub: sign_state(sub, state_key(data_dir())),
+        lambda state: verify_state(state, state_key(data_dir())),
+    )

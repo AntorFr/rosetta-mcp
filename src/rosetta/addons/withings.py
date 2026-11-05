@@ -32,13 +32,9 @@ Tool descriptions are in French - runtime UX for the household agents.
 """
 
 import asyncio
-import base64
-import hashlib
-import hmac
 import logging
 import os
 import re
-import secrets
 import time
 import unicodedata
 from datetime import date, datetime, timedelta, timezone, tzinfo
@@ -56,6 +52,7 @@ from ._common import (
     new_server,
     read_user,
     remote_user,
+    state_codec,
     write_user,
 )
 
@@ -721,39 +718,7 @@ async def withings_devices() -> dict:
 # Enrolment (browser flow, guarded by the ingress forwardAuth)
 # --------------------------------------------------------------------------
 
-def _state_key() -> bytes:
-    path = os.path.join(_data_dir(), "state.key")
-    try:
-        with open(path, "rb") as f:
-            return f.read()
-    except FileNotFoundError:
-        key = secrets.token_bytes(32)
-        os.makedirs(_data_dir(), exist_ok=True)
-        with open(path, "wb") as f:
-            f.write(key)
-        os.chmod(path, 0o600)
-        return key
-
-
-def _sign_state(sub: str) -> str:
-    payload = f"{int(time.time()) + 600}.{sub}"
-    sig = hmac.new(_state_key(), payload.encode(), hashlib.sha256).hexdigest()
-    return base64.urlsafe_b64encode(f"{payload}.{sig}".encode()).decode()
-
-
-def _verify_state(state: str) -> str | None:
-    try:
-        expiry, sub, sig = base64.urlsafe_b64decode(state.encode()).decode().split(".", 2)
-        payload = f"{expiry}.{sub}"
-        if not hmac.compare_digest(
-            sig, hmac.new(_state_key(), payload.encode(), hashlib.sha256).hexdigest()
-        ):
-            return None
-        if time.time() > int(expiry):
-            return None
-        return sub
-    except Exception:
-        return None
+_sign_state, _verify_state = state_codec(_data_dir)
 
 
 def _page(glyph: str, title: str, message: str, status: int = 200):
