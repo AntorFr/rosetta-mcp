@@ -18,6 +18,7 @@ import ast
 import asyncio
 import difflib
 import importlib
+import inspect
 import json
 import os
 import pkgutil
@@ -152,7 +153,8 @@ def _tools() -> dict:
         module = importlib.import_module(f"rosetta.addons.{name}")
         tools = asyncio.run(module.mcp.list_tools())
         out[name] = sorted(
-            ({"name": t.name, "description": t.description, "inputSchema": t.inputSchema}
+            ({"name": t.name, "description": inspect.cleandoc(t.description) if t.description else t.description,
+              "inputSchema": t.inputSchema}
              for t in tools),
             key=lambda t: t["name"],
         )
