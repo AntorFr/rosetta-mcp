@@ -152,8 +152,11 @@ in the task review. Rejected: unifying the variants — it changes a visible val
   hexdigest, 600 s, key in `state.key`) and are extracted. github's differs (`sub|ts|sig`,
   truncated digest, key derived from the client secret): it **stays**, since unifying
   would invalidate states in flight and change a token.
-- **Current subject**: `_current_sub()` is identical in github, google, quotas, withings;
-  withings also carries a copy of `remote_user` (`_remote_user`), now in `_common`.
+- **Current subject**: `_current_sub()` is identical in github, quotas and withings, and is
+  extracted as `current_subject()` in `_common`; withings also carried a copy of `remote_user`
+  (`_remote_user`), now in `_common`. google's `_current_sub()` **stays**: it is not a copy
+  (it calls `bridge_learn` and falls back on the identity bridge / the existing file), so
+  extracting it would change behaviour.
 - **Time zone and paging**: the `TZ` lookups differ in fallback (str / `ZoneInfo` / UTC /
   empty-string handling) and no paging helper is duplicated (the `nextPageToken` match is a
   comment). Not extracted; the review records the check so the family is not re-opened.
