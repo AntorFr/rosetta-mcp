@@ -2,7 +2,7 @@
 
 Findings of the quality epic that would change behaviour, a pin or a default, so none was applied (AD-7, I-4). Each is written for the operator to decide. State of the code audited: v0.30.0 plus the epic's slices (`pyproject.toml`, `Dockerfile`, `.github/workflows/docker-publish.yml`, `src/rosetta/addons/`).
 
-Cost classes (AD-recommandations-1): **S** a text, config or pin change, no code; **M** a bounded code change under the existing tests; **L** a refactor or a change of behaviour needing its own slice. Entries are ordered S, then M, then L. Status is `open` until the operator decides (`accepted` or `declined`, with the reason).
+Cost classes (AD-recommandations-1): **S** a text, config or pin change, no code; **M** a bounded code change under the existing tests; **L** a refactor or a change of behaviour needing its own slice. Entries are in two groups, the seven first subjects (R-1 to R-7) then the findings added from the earlier slices (R-8 onward), each ordered S, then M, then L; a new entry goes at the end of the last group, keeping that order. Status is `open` until the operator decides (`accepted` or `declined`, with the reason).
 
 ## Table of contents
 

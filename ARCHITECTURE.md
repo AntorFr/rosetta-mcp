@@ -98,8 +98,8 @@ no-functional-change epic). Reversed if a documentation fix proves to need a man
 ### AD-2 — Documentation layout
 `README.md` (what/how to run/configure, operator-facing), `ARCHITECTURE.md` (organs,
 `AD-n`, rejections), `docs/addons.md` (per-addon reference), `docs/donnees.md`,
-`docs/parcours.md`, `docs/ecrans.md` (stating there is none); `docs/recommandations.md` is
-not written yet (the recommendations slice creates it).
+`docs/parcours.md`, `docs/ecrans.md` (stating there is none); `docs/recommandations.md` (findings left
+for the operator to decide, AD-7).
 Language: English for `README.md` and `ARCHITECTURE.md`; `docs/addons.md`
 is in French, as the tool descriptions it quotes; the other `docs/` pages are in English. Rejected: one giant README (it is already
 555 lines and wrong in places); a wiki (a pod reads only the repo).
@@ -135,8 +135,8 @@ recommendation. Reversed if a measured first run shows few errors.
 ### AD-7 — Findings that change behaviour become recommendations
 Hard-coded personal contacts in default User-Agents (`contact@antor.fr`), the undocumented
 Anthropic endpoint of `quotas`, unpinned `yt-dlp`, base image not pinned by digest,
-Actions pinned by tag: each is to be written in `docs/recommandations.md` (not yet created: recommendations
-slice) with options and a recommendation. None is applied in this epic, because changing a default or a pin is a
+Actions pinned by tag: each is to be written in `docs/recommandations.md` (R-1 to R-11, all `open`; state and
+how to extend it: AD-recommandations-1) with options and a recommendation. None is applied in this epic, because changing a default or a pin is a
 visible change the operator owns.
 
 ### AD-filet-1 — The characterisation test reads the code, one snapshot file pins it
@@ -196,9 +196,8 @@ personal contacts in default User-Agents, the undocumented `quotas` endpoint, un
 `google.py` and the other large modules. Added to them: every finding carried by the
 reviews of the earlier slices (ignored lint findings whose fix would change behaviour,
 AD-outillage-1; helper families left un-extracted, AD-nettoyage-2; claims the
-documentation could not confirm, AD-doc-1), found in the three ADs named (on the
-slices' branches until they are merged into the epic) and in the review lines of the
-slices' tasks (`tasks/<id>/discussion.md` of the pilotage store). Each entry carries a cost class for the operator's decision of its
+documentation could not confirm, AD-doc-1), found in the three ADs named above and in the review notes of the earlier slices (kept by the build
+tooling outside this repository; R-8 to R-11 are what they held when this file was written). Each entry carries a cost class for the operator's decision of its
 recommended option: S (a text, config or pin change, no code), M (a bounded code change
 under the existing tests), L (a refactor or a change of behaviour needing its own slice).
 Entries are ordered by that class, S first, within two groups: the seven mandatory
