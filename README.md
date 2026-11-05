@@ -544,9 +544,11 @@ gateway meant to be its only caller.
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .[dev]
-.venv/bin/pytest
+.venv/bin/pytest   # includes tests/test_surface.py, pinned by tests/surface.json
 ROSETTA_AUTH=off .venv/bin/uvicorn rosetta.main:app --port 8200
 ```
+
+With no secrets set, `/health` answers `degraded` and names the addons whose variables are missing (`missing env: …`): that is the expected state of a bare local start (stub mode), not a failure.
 
 ## Deployment
 
