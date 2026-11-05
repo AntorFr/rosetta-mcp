@@ -34,7 +34,7 @@ import re
 
 import httpx
 
-from ._common import TIMEOUT, dig, new_server
+from ._common import dig, http_client, new_server
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -53,7 +53,7 @@ _transport = None
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=TIMEOUT, transport=_transport)
+    return http_client(_transport)
 
 
 def _api_key() -> str:

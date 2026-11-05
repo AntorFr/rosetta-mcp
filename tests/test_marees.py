@@ -11,7 +11,6 @@ Tout est mocké (httpx.MockTransport, aucun réseau).
 """
 
 import asyncio
-import json
 from datetime import date, timedelta
 
 import httpx
