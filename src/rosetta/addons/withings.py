@@ -35,7 +35,6 @@ import asyncio
 import base64
 import hashlib
 import hmac
-import json
 import logging
 import os
 import re
@@ -50,7 +49,15 @@ from zoneinfo import ZoneInfo
 import httpx
 from starlette.responses import RedirectResponse
 
-from ._common import current_subject, enrol_page, http_client, new_server, remote_user
+from ._common import (
+    current_subject,
+    enrol_page,
+    http_client,
+    new_server,
+    read_user,
+    remote_user,
+    write_user,
+)
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -233,23 +240,11 @@ _current_sub = current_subject  # cf. _common
 
 
 def _read_user(sub: str) -> dict | None:
-    try:
-        with open(_user_file(sub)) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return None
+    return read_user(_user_file(sub), None)
 
 
 def _write_user(sub: str, record: dict) -> None:
-    """Atomic: the refresh token rotates, and a half-written file is a lost
-    account (no way to re-derive it but a browser re-enrolment)."""
-    os.makedirs(os.path.join(_data_dir(), "users"), exist_ok=True)
-    path = _user_file(sub)
-    tmp = f"{path}.tmp"
-    with open(tmp, "w") as f:
-        json.dump(record, f)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    write_user(_user_file(sub), record)
 
 
 def _enrol_hint(sub: str) -> str:

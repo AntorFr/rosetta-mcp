@@ -187,3 +187,24 @@ def dig(d, *path, default=None):
         if cur is None:
             return default
     return cur
+
+
+def read_user(path: str, default=None):
+    """A per-subject JSON record, or `default` if the file is absent or unreadable."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
+def write_user(path: str, record: dict) -> None:
+    """Atomic (`.tmp` + chmod 600 + replace): the refresh token may rotate, and a
+    half-written file is a lost credential - there is no way to re-derive it but
+    another browser login."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(record, f)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
