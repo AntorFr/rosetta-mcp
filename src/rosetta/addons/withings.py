@@ -468,6 +468,28 @@ def _minutes(seconds) -> float | None:
 # Tools - lecture seule, aucune écriture possible
 # --------------------------------------------------------------------------
 
+def _group_entry(group: dict) -> dict:
+    """One measure group as the tool renders it: dated, labelled, scaled."""
+    measures = []
+    for measure in group.get("measures") or []:
+        code = int(measure.get("type", 0))
+        label, unit = MEASURE_TYPES.get(code, (f"type {code}", None))
+        entry = {"type": label, "value": _scaled(measure)}
+        if unit:
+            entry["unit"] = unit
+        position = measure.get("position")
+        if position is not None:
+            entry["position"] = MEASURE_POSITIONS.get(int(position), f"position {position}")
+        measures.append(entry)
+    entry = {"date": _local(group.get("date"), group.get("timezone")),
+             "measures": measures}
+    if group.get("attrib") in MANUAL_ATTRIB:
+        entry["manual"] = True
+    if group.get("comment"):
+        entry["comment"] = group["comment"]
+    return entry
+
+
 @mcp.tool()
 async def withings_measures(start: str | None = None, end: str | None = None,
                             types: str | None = None, max_results: int = 30) -> dict:
@@ -511,26 +533,7 @@ async def withings_measures(start: str | None = None, end: str | None = None,
     groups = sorted(body.get("measuregrps") or [],
                     key=lambda g: g.get("date") or 0, reverse=True)
     limit = max(1, min(int(max_results), 200))
-    out = []
-    for group in groups[:limit]:
-        measures = []
-        for measure in group.get("measures") or []:
-            code = int(measure.get("type", 0))
-            label, unit = MEASURE_TYPES.get(code, (f"type {code}", None))
-            entry = {"type": label, "value": _scaled(measure)}
-            if unit:
-                entry["unit"] = unit
-            position = measure.get("position")
-            if position is not None:
-                entry["position"] = MEASURE_POSITIONS.get(int(position), f"position {position}")
-            measures.append(entry)
-        entry = {"date": _local(group.get("date"), group.get("timezone")),
-                 "measures": measures}
-        if group.get("attrib") in MANUAL_ATTRIB:
-            entry["manual"] = True
-        if group.get("comment"):
-            entry["comment"] = group["comment"]
-        out.append(entry)
+    out = [_group_entry(group) for group in groups[:limit]]
 
     answer: dict = {"groups": out}
     if len(groups) > limit:
