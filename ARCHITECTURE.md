@@ -83,3 +83,44 @@ visible change the operator owns.
 
 - Rewriting addons for style: risk without benefit, contradicts I-4.
 - Adding features found missing during the cleanup: out of scope, go to recommendations.
+
+## Decisions of the `rosetta-qualite-nettoyage` slice
+
+Survey of v0.29.0 (the copies are *similar*, rarely *identical*; behaviour preservation
+decides which ones can be shared).
+
+### AD-nettoyage-1 — Extract only what is identical, or reproducible by a parameter
+A copy is extracted to `_common.py` when every addon that carries it behaves the same,
+or when a parameter reproduces each addon's behaviour exactly. A copy that differs in
+output (token format, expiry, fallback) stays where it is and is named, with its reason,
+in the task review. Rejected: unifying the variants — it changes a visible value
+(e.g. OAuth `state` tokens in flight) and contradicts I-4.
+
+### AD-nettoyage-2 — The families, as surveyed
+- **HTTP client factory**: `_client()` is `httpx.AsyncClient(timeout=TIMEOUT, transport=_transport)`
+  in github, google, maps, marees, meteo, quotas, withings; variants add headers (food),
+  redirects (verbatim), a timeout argument (trace), or a split `httpx.Timeout` (git).
+  One `http_client(transport, timeout=…, **kw)` in `_common`; each addon keeps its
+  `_transport` test hook and a one-line `_client()` that passes it (tests patch
+  `addon._transport`).
+- **Per-subject file store**: `_read_user`/`_write_user` identical but for the empty value
+  (`None` in withings, `{}` in quotas). Extracted with a `default` parameter; the file
+  format (`docs/donnees.md`) is read and written byte for byte as before. google and github
+  keep their own store (non-atomic or multi-reader paths differ): named, not touched.
+- **Signed OAuth `state`**: google and withings are identical (`expiry.sub.sig`, full
+  hexdigest, 600 s, key in `state.key`) and are extracted. github's differs (`sub|ts|sig`,
+  truncated digest, key derived from the client secret): it **stays**, since unifying
+  would invalidate states in flight and change a token.
+- **Current subject**: `_current_sub()` is identical in github, google, quotas, withings;
+  withings also carries a copy of `remote_user` (`_remote_user`), now in `_common`.
+- **Time zone and paging**: the `TZ` lookups differ in fallback (str / `ZoneInfo` / UTC /
+  empty-string handling) and no paging helper is duplicated (the `nextPageToken` match is a
+  comment). Not extracted; the review records the check so the family is not re-opened.
+
+### AD-nettoyage-3 — Swallowed exceptions and long functions
+The ten `except …: pass|continue` sites of v0.29.0 (postier, courrier, marees, `_common`,
+trace, food, verbatim, withings ×3) are each either logged at debug level (no change of
+control flow, no new output on the tool path) or kept with `# noqa: S110`/`S112`/`SIM105`
+and a reason. The five longest functions at the start (trace_pois 108 lines, marees 105,
+mail_attachment 80, wind_forecast 74, then create_app and withings_measures at 71) are cut
+by private helpers or kept with their reason; the tool function and its docstring stay.
