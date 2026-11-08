@@ -502,4 +502,7 @@ tag. (4) A ruleset `tests-complets` on `main` (public repository) requires the s
 (5) `CLAUDE.md` states the rule. Rejected: keeping `ruff` as a separate CI job (a second proof
 of the same commit, which R15 removes); keeping the PR build as a smoke test (the Dockerfile
 is exercised at the tag, and a branch push builds nothing); attesting inside the workflow
-(the proof would be GitHub's again, not the chain's). The tests themselves are not changed.
+(the proof would be GitHub's again, not the chain's). The tests themselves are not changed. AD-preuve-1 replaces what AD-6 and AD-outillage-2 say of
+CI: no GitHub job plays lint or tests, on pull requests or elsewhere; the verdict a branch gets
+is the attestation of its head, and the passages of the README (Development) and
+`docs/parcours.md` P-1 that describe the `test` job or a CI verdict are rewritten with it.
