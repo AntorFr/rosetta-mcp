@@ -82,7 +82,7 @@ Every module of `src/rosetta/` outside the addons, then the addon contract and i
 - `HEALTHCHECK` GETs `/health` on 127.0.0.1:8200 (unauthenticated by design, also the
   Kubernetes probe) and requires status 200; a degraded addon still gives 200.
 - Image `ghcr.io/antorfr/rosetta-mcp` published by `.github/workflows/docker-publish.yml`
-  (lint and tests gate the build, AD-outillage-2); manifests live in `AntorFr/k8s-home-lab`
+  (the attestation of the suite gates the build, AD-preuve-1; before that AD-outillage-2); manifests live in `AntorFr/k8s-home-lab`
   (not touched here, AD-1).
 - Single replica: the rotating refresh tokens of `github` and `withings`, the sliding
   windows of `food` and `postier` are in-process state (AD-doc-18).
@@ -482,3 +482,24 @@ JWT (machine tokens included, for supervision pods), `/quotas/enroll` behind the
 no token holder can enrol or replace a credential, and the credential appears in no answer.
 Machine calls read the counters of `ROSETTA_QUOTAS_OWNER`; several enrolled users without an
 owner is an error, never a guess.
+
+### AD-preuve-1 — The proof of test is an attestation; the image is built only from a tag, after checking it
+`rosetta-mcp` applies the chain's general rule R15 (one proof of test per commit, played
+wherever it runs best). (1) The suite is declared in `.sdlc.yaml` (`tests:` — `commande`
+`scripts/suite-attestee.sh`, `rapport` `resultats.xml`, `format` `junit`, `delai` `15m`; the
+suite measured 70 s on a pod, the margin covers a cold virtualenv). The script is what
+`docker-publish.yml` ran before and nothing else: build a virtualenv, `pip install -e .[dev]`,
+`ruff check .`, `pytest --cov --junitxml=resultats.xml`; the coverage floor of AD-outillage-2
+stays in `pyproject.toml` and still fails the run. (2) `attester --publier` plays it on an
+extraction of the commit and posts the `tests-complets` status; it runs from a workstation or a
+pod of the chain, never from a GitHub workflow. (3) `docker-publish.yml` plays no test and
+triggers on `v*` tags (and `workflow_dispatch`, to rebuild a tag attested after it was
+pushed), never on a branch push, a pull request or a release: an `attestation` job reads the
+`tests-complets` status of the tagged commit or of a parent with the same tree (a merge commit
+whose content is the attested head's), and `build` needs it. No image is built from `main`:
+the `:main` tag disappears from the metadata, `:latest` and the SemVer tags remain, from the
+tag. (4) A ruleset `tests-complets` on `main` (public repository) requires the status.
+(5) `CLAUDE.md` states the rule. Rejected: keeping `ruff` as a separate CI job (a second proof
+of the same commit, which R15 removes); keeping the PR build as a smoke test (the Dockerfile
+is exercised at the tag, and a branch push builds nothing); attesting inside the workflow
+(the proof would be GitHub's again, not the chain's). The tests themselves are not changed.
