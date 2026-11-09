@@ -78,4 +78,4 @@ def test_constats_vrais_dans_le_code():
     dock = (ROOT / "Dockerfile").read_text().splitlines()
     assert dock[5].startswith("FROM python:3.12-slim") and dock[14].startswith("FROM python:3.12-slim")
     wf = (ROOT / ".github/workflows/docker-publish.yml").read_text()
-    assert len(re.findall(r"uses: \S+@v\d", wf)) == 8  # 7 Actions, checkout deux fois
+    assert len(re.findall(r"uses: \S+@v\d", wf)) == 7  # 6 Actions, checkout deux fois (attestation, build)

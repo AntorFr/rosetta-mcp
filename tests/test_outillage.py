@@ -1,4 +1,4 @@
-"""B-7 / B-5 (lint) / B-6 (coverage): lint and coverage are configured, enforced, and gate the image build.
+"""B-7 / B-5 (lint) / B-6 (coverage): lint and coverage are configured, enforced, ; the image build is gated by the attestation (tests/test_publication.py).
 
 Expected values come from the need, written literally.
 """
@@ -96,37 +96,3 @@ def test_pytest_cov_fails_when_coverage_is_below_the_floor(tmp_path):
     out = r.stdout + r.stderr
     assert r.returncode != 0, out
     assert "FAIL Required test coverage of 85.0% not reached" in out
-
-
-def test_ci_build_job_depends_on_the_test_job():
-    jobs = _workflow()["jobs"]
-    needs = jobs["build"]["needs"]
-    needs = [needs] if isinstance(needs, str) else needs
-    assert "test" in needs
-
-
-def test_ci_gating_job_runs_ruff_check_and_pytest_cov():
-    jobs = _workflow()["jobs"]
-    runs = [s.get("run", "") for s in jobs["test"]["steps"]]
-    assert any("ruff check" in c for c in runs)
-    assert any(c.startswith("pytest") and "--cov" in c for c in runs)
-
-
-def test_ci_gating_steps_cannot_fail_silently():
-    jobs = _workflow()["jobs"]
-    assert not jobs["test"].get("continue-on-error")
-    for s in jobs["test"]["steps"]:
-        if "ruff check" in s.get("run", "") or "pytest" in s.get("run", ""):
-            assert not s.get("continue-on-error")
-            assert "|| true" not in s["run"]
-
-
-def test_ci_runs_on_pull_requests():
-    assert "pull_request" in _workflow()[True]  # YAML 1.1 reads `on` as True
-
-
-def test_ci_installs_the_dev_extra_that_carries_ruff_and_pytest_cov():
-    dev = " ".join(_pyproject()["project"]["optional-dependencies"]["dev"])
-    assert "ruff" in dev and "pytest-cov" in dev
-    runs = [s.get("run", "") for s in _workflow()["jobs"]["test"]["steps"]]
-    assert any("[dev]" in c for c in runs)

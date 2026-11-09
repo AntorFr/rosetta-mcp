@@ -152,7 +152,7 @@ def test_actions_toujours_par_tag_tant_que_r_open():
         return  # décidé par l'opérateur : l'état du code n'est plus celui de la recommandation
     wf = (ROOT / ".github/workflows/docker-publish.yml").read_text()
     assert not re.search(r"uses: \S+@[0-9a-f]{40}", wf)
-    assert len(re.findall(r"uses: \S+@v\d", wf)) == 8
+    assert len(re.findall(r"uses: \S+@v\d", wf)) == 7
 
 
 def test_mypy_absent_de_la_configuration_et_de_la_ci_tant_que_r_open():
