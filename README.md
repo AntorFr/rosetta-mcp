@@ -180,15 +180,15 @@ work without it. The hub does not refuse to start on a missing one; an addon's
 
 No GitHub job plays the suite. A commit is proved by its `tests-complets` attestation, posted by
 `attester --publier` (a command of the chain, run from a workstation or a pod; AD-preuve-1). The
-suite is declared in `.sdlc.yaml` and played alone by `scripts/suite-attestee.sh`, which does,
-on Python 3.12:
+suite is declared in `.sdlc.yaml` and played alone by `scripts/suite-attestee.sh`
+(fresh `.venv-suite`, same steps, any Python ≥ 3.12). By hand, the equivalent:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e .[dev]
 .venv/bin/ruff check .                                # lint
 .venv/bin/pytest --cov --cov-report=term-missing      # tests + coverage
-ROSETTA_AUTH=off .venv/bin/uvicorn rosetta.main:app --port 8200   # local start (not CI)
+ROSETTA_AUTH=off .venv/bin/uvicorn rosetta.main:app --port 8200   # local start (not part of the suite)
 ```
 
 Once started with auth off, an addon answers MCP over POST on its slash-terminated path, e.g.
