@@ -124,7 +124,7 @@ docstrings that agents read as tool descriptions (they are part of the contract)
 Rejected: splitting `google.py` & co. into packages now — a larger diff for no
 behavioural gain; listed as a recommendation.
 
-### AD-6 — Tooling: ruff and coverage in CI, mypy recommended only
+### AD-6 — Tooling: ruff and coverage (CI part replaced by AD-preuve-1), mypy recommended only
 `pyproject.toml` gets a `ruff` configuration (lint, with the findings of the audit fixed
 or explicitly ignored with a reason) and `pytest-cov` in the `dev` extra; CI runs lint
 and tests with coverage on pull requests and gates the image build on them. The
@@ -268,7 +268,7 @@ giving the measured longest line, rather than ignoring the rule. `ruff` joins th
 Rejected: `select = ["ALL"]` (a lint project of its own); adding `ruff format --check` to CI
 (not asked by B-7).
 
-### AD-outillage-2 — Coverage floor measured, then enforced in the existing `test` job
+### AD-outillage-2 — Coverage floor measured, then enforced (its CI `test` job is replaced by AD-preuve-1)
 `pytest-cov` joins the `dev` extra; `[tool.coverage.run]` has `source = ["src/rosetta"]`
 and `[tool.coverage.report]` has `fail_under` set to the **measured total, rounded down
 to the integer**, on the full suite (characterisation test and `transit` tests included),
@@ -288,7 +288,7 @@ of the characterisation snapshot in `tests/`; environment variables = the variab
 of the same snapshot, each given in the `README.md` configuration table with its meaning,
 whether it is required, and its default; state files = the code that reads and writes them
 (path from the environment override, format from the serialisation call). The lint and test
-commands in the README are copied from `.github/workflows/docker-publish.yml` (AD-outillage-2),
+commands in the README are copied from `scripts/suite-attestee.sh` (AD-preuve-1; before that `docker-publish.yml`, AD-outillage-2),
 not retyped. A claim the code does not confirm is not written; one that cannot be confirmed
 is listed in the task review for the recommendations slice (AD-7). `docs/addons.md` has one
 section per addon in the same order, each with: purpose, tools, required variables, identity

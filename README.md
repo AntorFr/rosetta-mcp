@@ -178,8 +178,10 @@ work without it. The hub does not refuse to start on a missing one; an addon's
 
 ## Development
 
-CI (the `test` job of `.github/workflows/docker-publish.yml`, which the `build` job needs)
-runs, on Python 3.12:
+No GitHub job plays the suite. A commit is proved by its `tests-complets` attestation, posted by
+`attester --publier` (a command of the chain, run from a workstation or a pod; AD-preuve-1). The
+suite is declared in `.sdlc.yaml` and played alone by `scripts/suite-attestee.sh`, which does,
+on Python 3.12:
 
 ```bash
 python3 -m venv .venv
@@ -209,7 +211,8 @@ variables read by the code against `tests/surface.json`; after an intended chang
 
 ## Deployment
 
-Published as `ghcr.io/antorfr/rosetta-mcp` (SemVer tags, `docker-publish` workflow). Plain
+Published as `ghcr.io/antorfr/rosetta-mcp` (SemVer tags and `sha-`, `latest` for the highest stable version; the `docker-publish` workflow
+runs only on a `v*` tag, after checking the `tests-complets` attestation of the tagged commit; no `:main` image). Plain
 container, port 8200, runs as user `rosetta` (uid 1000), configured by environment.
 
 The addons that store credentials (`google`, `github`, `withings`, `quotas`) write per-user files under
