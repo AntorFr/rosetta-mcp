@@ -35,8 +35,9 @@ standard **without any functional change**. Product behaviour is described in
 - **B-6** — Tests prove it: every addon has a dedicated test file (at v0.29.0 `transit` had none; it has one now),
   the tool surface (names and input schemas) is pinned by a characterisation test, and
   coverage is measured.
-- **B-7** — CI runs lint and tests with coverage on every pull request, and the image
-  is only built if they pass.
+- **B-7** — The proof of test is the `tests-complets` attestation of a commit (lint and tests
+  with coverage, played by `attester`, AD-preuve-1); no GitHub job plays them, and the image
+  is only built from a `v*` tag whose commit carries the attestation.
 - **B-8** — Improvements that would change behaviour or deployment are not done but
   written in `docs/recommandations.md`, each with options and a recommendation, for
   the operator to arbitrate.
@@ -49,7 +50,7 @@ standard **without any functional change**. Product behaviour is described in
 - **P-1 — A pod takes a feature on Rosetta** (B-1, B-2, B-3, B-6, B-7). Reads
   `README.md` → `ARCHITECTURE.md` → `docs/addons.md` for the addon at stake; writes the
   addon change and its test; runs lint and tests with the documented commands; opens a
-  PR; CI gives the same verdict.
+  PR; the verdict is the attestation of the branch head, not a CI job.
 - **P-2 — The operator reviews quality and decides** (B-8, B-9). Reads the epic's
   result and `docs/recommandations.md`, then arbitrates each recommendation
   (accept → a future feature, reject → recorded in the same file with its reason).

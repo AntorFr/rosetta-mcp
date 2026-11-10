@@ -7,10 +7,11 @@ ROOT = Path(__file__).resolve().parent.parent
 ARCH = (ROOT / "ARCHITECTURE.md").read_text()
 
 
-def test_version_du_paquet_est_celle_du_nettoyage():
-    """Garde-fou : le littéral attendu ci-dessous est bien la version du code livré."""
+def test_version_du_paquet_n_est_pas_anterieure_au_nettoyage():
+    """Garde-fou : le paquet est au moins à la version du code livré (v0.30.0), sans être figé dessus."""
     meta = tomllib.loads((ROOT / "pyproject.toml").read_text())
-    assert meta["project"]["version"] == "0.30.0"
+    version = tuple(int(n) for n in meta["project"]["version"].split(".")[:3])
+    assert version >= (0, 30, 0)
 
 
 def test_architecture_statut_date_le_code_apres_nettoyage_de_v0_30_0():

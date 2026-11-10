@@ -1,0 +1,5 @@
+tests:
+  commande: scripts/suite-attestee.sh
+  rapport: resultats.xml
+  format: junit
+  delai: 15m

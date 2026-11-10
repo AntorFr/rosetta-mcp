@@ -90,11 +90,12 @@ def test_readme_dit_que_quatre_addons_persistent_sous_data():
         assert path in README
 
 
-def test_readme_commandes_de_lint_et_de_test_sont_celles_du_workflow():
-    assert "run: ruff check ." in WORKFLOW
-    assert "run: pytest --cov --cov-report=term-missing" in WORKFLOW
-    assert re.search(r"^\S*ruff check \.\s", README, re.M) or "ruff check ." in README
-    assert "pytest --cov --cov-report=term-missing" in README
+def test_readme_commandes_de_lint_et_de_test_sont_celles_de_la_suite_attestee():
+    script = (ROOT / "scripts" / "suite-attestee.sh").read_text()
+    assert "ruff check ." in script
+    assert "pytest --cov" in script
+    assert "ruff check ." in README
+    assert "pytest --cov" in README
     assert "pip install -e .[dev]" in README
 
 

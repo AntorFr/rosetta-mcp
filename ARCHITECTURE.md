@@ -82,7 +82,7 @@ Every module of `src/rosetta/` outside the addons, then the addon contract and i
 - `HEALTHCHECK` GETs `/health` on 127.0.0.1:8200 (unauthenticated by design, also the
   Kubernetes probe) and requires status 200; a degraded addon still gives 200.
 - Image `ghcr.io/antorfr/rosetta-mcp` published by `.github/workflows/docker-publish.yml`
-  (lint and tests gate the build, AD-outillage-2); manifests live in `AntorFr/k8s-home-lab`
+  (the attestation of the suite gates the build, AD-preuve-1; before that AD-outillage-2); manifests live in `AntorFr/k8s-home-lab`
   (not touched here, AD-1).
 - Single replica: the rotating refresh tokens of `github` and `withings`, the sliding
   windows of `food` and `postier` are in-process state (AD-doc-18).
@@ -124,7 +124,7 @@ docstrings that agents read as tool descriptions (they are part of the contract)
 Rejected: splitting `google.py` & co. into packages now — a larger diff for no
 behavioural gain; listed as a recommendation.
 
-### AD-6 — Tooling: ruff and coverage in CI, mypy recommended only
+### AD-6 — Tooling: ruff and coverage (CI part replaced by AD-preuve-1), mypy recommended only
 `pyproject.toml` gets a `ruff` configuration (lint, with the findings of the audit fixed
 or explicitly ignored with a reason) and `pytest-cov` in the `dev` extra; CI runs lint
 and tests with coverage on pull requests and gates the image build on them. The
@@ -148,7 +148,7 @@ is reviewed as one; when a tool, route or variable changes on purpose, rewrite i
 - **tools** — per addon (every module of `rosetta.addons` not starting with `_`), read
   through the FastMCP instance (`await mcp.list_tools()`): name, `description` (the
   docstring agents read, AD-5) and `inputSchema`. The description goes through
-  `inspect.cleandoc`: Python 3.13 dedents docstrings and 3.12 (the CI) does not, and the
+  `inspect.cleandoc`: Python 3.13 dedents docstrings and 3.12 does not, and the
   snapshot must not depend on the interpreter.
 - **routes** — from `create_app()` (auth off): every top-level route path with its
   methods, every addon `Mount` path, plus each addon's `extra_routes` and `open_paths`
@@ -268,7 +268,7 @@ giving the measured longest line, rather than ignoring the rule. `ruff` joins th
 Rejected: `select = ["ALL"]` (a lint project of its own); adding `ruff format --check` to CI
 (not asked by B-7).
 
-### AD-outillage-2 — Coverage floor measured, then enforced in the existing `test` job
+### AD-outillage-2 — Coverage floor measured, then enforced (its CI `test` job is replaced by AD-preuve-1)
 `pytest-cov` joins the `dev` extra; `[tool.coverage.run]` has `source = ["src/rosetta"]`
 and `[tool.coverage.report]` has `fail_under` set to the **measured total, rounded down
 to the integer**, on the full suite (characterisation test and `transit` tests included),
@@ -288,7 +288,7 @@ of the characterisation snapshot in `tests/`; environment variables = the variab
 of the same snapshot, each given in the `README.md` configuration table with its meaning,
 whether it is required, and its default; state files = the code that reads and writes them
 (path from the environment override, format from the serialisation call). The lint and test
-commands in the README are copied from `.github/workflows/docker-publish.yml` (AD-outillage-2),
+commands in the README are copied from `scripts/suite-attestee.sh` (AD-preuve-1; before that `docker-publish.yml`, AD-outillage-2),
 not retyped. A claim the code does not confirm is not written; one that cannot be confirmed
 is listed in the task review for the recommendations slice (AD-7). `docs/addons.md` has one
 section per addon in the same order, each with: purpose, tools, required variables, identity
@@ -482,3 +482,28 @@ JWT (machine tokens included, for supervision pods), `/quotas/enroll` behind the
 no token holder can enrol or replace a credential, and the credential appears in no answer.
 Machine calls read the counters of `ROSETTA_QUOTAS_OWNER`; several enrolled users without an
 owner is an error, never a guess.
+
+### AD-preuve-1 — The proof of test is an attestation; the image is built only from a tag, after checking it
+`rosetta-mcp` applies the chain's general rule R15 (one proof of test per commit, played
+wherever it runs best). (1) The suite is declared in `.sdlc.yaml` (`tests:` — `commande`
+`scripts/suite-attestee.sh`, `rapport` `resultats.xml`, `format` `junit`, `delai` `15m`; the
+suite measured 70 s on a pod, the margin covers a cold virtualenv). The script is what
+`docker-publish.yml` ran before and nothing else: build a virtualenv, `pip install -e .[dev]`,
+`ruff check .`, `pytest --cov --junitxml=resultats.xml`; the coverage floor of AD-outillage-2
+stays in `pyproject.toml` and still fails the run. (2) `attester --publier` plays it on an
+extraction of the commit and posts the `tests-complets` status; it runs from a workstation or a
+pod of the chain, never from a GitHub workflow. (3) `docker-publish.yml` plays no test and
+triggers on `v*` tags (and `workflow_dispatch`, to rebuild a tag attested after it was
+pushed; both jobs carry `if: startsWith(github.ref, 'refs/tags/v')`, so a manual run from a
+branch builds nothing), never on a branch push, a pull request or a release: an `attestation` job reads the
+`tests-complets` status of the tagged commit or of a parent with the same tree (a merge commit
+whose content is the attested head's), and `build` needs it. No image is built from `main`:
+the `:main` tag disappears from the metadata, `:latest` and the SemVer tags remain, from the
+tag. (4) A ruleset `tests-complets` on `main` (public repository) requires the status.
+(5) `CLAUDE.md` states the rule. Rejected: keeping `ruff` as a separate CI job (a second proof
+of the same commit, which R15 removes); keeping the PR build as a smoke test (the Dockerfile
+is exercised at the tag, and a branch push builds nothing); attesting inside the workflow
+(the proof would be GitHub's again, not the chain's). The tests themselves are not changed. AD-preuve-1 replaces what AD-6 and AD-outillage-2 say of
+CI: no GitHub job plays lint or tests, on pull requests or elsewhere; the verdict a branch gets
+is the attestation of its head, and the passages of the README (Development) and
+`docs/parcours.md` P-1 that describe the `test` job or a CI verdict are rewritten with it.

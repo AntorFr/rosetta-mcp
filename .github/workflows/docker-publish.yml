@@ -2,12 +2,7 @@ name: docker-publish
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
-  release:
-    types: [published]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -19,20 +14,47 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  test:
+  attestation:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: read
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: pip install -e .[dev]
-      - run: ruff check .
-      - run: pytest --cov --cov-report=term-missing
+          fetch-depth: 2
+      - name: Check the tests-complets attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          tree=$(git rev-parse "HEAD^{tree}")
+          # the tagged commit, or a parent with the same tree (a merge commit
+          # whose content is the attested head's)
+          candidates="$head"
+          for parent in $(git rev-list --parents -n 1 HEAD | cut -d' ' -f2-); do
+            if [ "$(git rev-parse "$parent^{tree}")" = "$tree" ]; then
+              candidates="$candidates $parent"
+            fi
+          done
+          for sha in $candidates; do
+            state=$(gh api "repos/$REPO/commits/$sha/status" \
+              --jq '[.statuses[] | select(.context == "tests-complets")][0].state // ""')
+            if [ "$state" = "success" ]; then
+              echo "tests-complets attested on $sha"
+              exit 0
+            fi
+          done
+          echo "::error::no tests-complets attestation (success) on $head or on a parent with the same tree: run 'attester --publier' on this commit before tagging"
+          exit 1
 
   build:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: test
+    needs: attestation
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +62,6 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Login GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -53,11 +74,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
             type=sha,prefix=sha-
 
       - name: Build & push
@@ -65,11 +84,11 @@ jobs:
         with:
           context: .
           # Multi-arch only on stable releases (vX.Y.Z without suffix);
-          # main / -beta / -rc builds stay amd64-only for speed.
+          # -beta / -rc builds stay amd64-only for speed.
           platforms: >-
             ${{ (startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-'))
                 && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
