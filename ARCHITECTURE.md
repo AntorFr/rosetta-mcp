@@ -494,7 +494,8 @@ stays in `pyproject.toml` and still fails the run. (2) `attester --publier` play
 extraction of the commit and posts the `tests-complets` status; it runs from a workstation or a
 pod of the chain, never from a GitHub workflow. (3) `docker-publish.yml` plays no test and
 triggers on `v*` tags (and `workflow_dispatch`, to rebuild a tag attested after it was
-pushed), never on a branch push, a pull request or a release: an `attestation` job reads the
+pushed; both jobs carry `if: startsWith(github.ref, 'refs/tags/v')`, so a manual run from a
+branch builds nothing), never on a branch push, a pull request or a release: an `attestation` job reads the
 `tests-complets` status of the tagged commit or of a parent with the same tree (a merge commit
 whose content is the attested head's), and `build` needs it. No image is built from `main`:
 the `:main` tag disappears from the metadata, `:latest` and the SemVer tags remain, from the
