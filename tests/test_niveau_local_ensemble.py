@@ -44,8 +44,8 @@ def test_le_niveau_local_n_est_pas_une_liste_de_fichiers():
 def test_un_commentaire_dit_pourquoi_local_egale_la_commande():
     # Livre : « avec un commentaire qui le dit ».
     lignes = RAW.splitlines()
-    i = next(n for n, l in enumerate(lignes) if l.strip().startswith("local:"))
-    assert any(l.strip().startswith("#") for l in lignes[max(0, i - 4):i + 1])
+    i = next(n for n, ligne in enumerate(lignes) if ligne.strip().startswith("local:"))
+    assert any(ligne.strip().startswith("#") for ligne in lignes[max(0, i - 4):i + 1])
 
 
 def test_le_rejeu_est_declare_avec_le_gabarit_tests():
