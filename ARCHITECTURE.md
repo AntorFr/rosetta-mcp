@@ -487,7 +487,10 @@ owner is an error, never a guess.
 `rosetta-mcp` applies the chain's general rule R15 (one proof of test per commit, played
 wherever it runs best). (1) The suite is declared in `.sdlc.yaml` (`tests:` — `commande`
 `scripts/suite-attestee.sh`, `rapport` `resultats.xml`, `format` `junit`, `delai` `15m`; the
-suite measured 70 s on a pod, the margin covers a cold virtualenv). The script is what
+pytest alone measured 70 s on a pod, the whole command 4 min 21 s with a cold virtualenv; `delai` covers the latter). Two optional fields
+complete it: `local` (the local level, equal to `commande`: 637 tests, the slowest 3.5 s, no
+slow class to exclude) and `rejouer` (`scripts/rejouer.sh {tests}`, which replays only the
+named tests, same JUnit report, no lint or coverage, error on an unknown name). The script is what
 `docker-publish.yml` ran before and nothing else: build a virtualenv, `pip install -e .[dev]`,
 `ruff check .`, `pytest --cov --junitxml=resultats.xml`; the coverage floor of AD-outillage-2
 stays in `pyproject.toml` and still fails the run. (2) `attester --publier` plays it on an

@@ -181,7 +181,11 @@ work without it. The hub does not refuse to start on a missing one; an addon's
 No GitHub job plays the suite. A commit is proved by its `tests-complets` attestation, posted by
 `attester --publier` (a command of the chain, run from a workstation or a pod; AD-preuve-1). The
 suite is declared in `.sdlc.yaml` and played alone by `scripts/suite-attestee.sh`
-(fresh `.venv-suite`, same steps, any Python ≥ 3.12). By hand, the equivalent:
+(fresh `.venv-suite`, same steps, any Python ≥ 3.12). The suite has no slow class, so the
+local level (the `local:` key of `.sdlc.yaml`) is that same script. To replay named tests only, without lint or
+coverage: `scripts/rejouer.sh tests.test_hub.test_addons_allowlist` (JUnit names, bare or
+prefixed by the classname; exits 2 on an unknown name; reuses `.venv-suite`, creates it if
+missing; writes `resultats.xml` with those tests only). By hand, the equivalent:
 
 ```bash
 python3 -m venv .venv
