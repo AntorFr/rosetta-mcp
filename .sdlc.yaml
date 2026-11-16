@@ -3,7 +3,7 @@ tests:
   rapport: resultats.xml
   format: junit
   delai: 15m
-  # Niveau local = la suite entière : elle n'a pas de classe lente (637 tests, le plus lent
+  # Niveau local = la suite entière : elle n'a pas de classe lente (663 tests, le plus lent
   # dure 3,5 s). Durée de la commande entière (venv, pip, ruff, pytest avec couverture),
   # mesurée au pod : 4 min 21 s.
   local: scripts/suite-attestee.sh

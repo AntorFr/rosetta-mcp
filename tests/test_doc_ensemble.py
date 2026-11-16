@@ -211,8 +211,12 @@ def test_architecture_ne_cite_aucun_fichier_source_inexistant():
 
 # ---------- B-4 / AD-2 / AD-3 : retrait de .agent/status.md ----------
 
-def test_agent_status_md_n_existe_plus():
-    assert not (ROOT / ".agent" / "status.md").exists()
+def test_agent_status_md_reste_court():
+    # Le journal de bord est retiré (AD-3) ; un état court (.agent/status.md) peut exister
+    # (écrit par l'assemblage de chaque feature) : il ne redevient pas un journal.
+    status = ROOT / ".agent" / "status.md"
+    if status.exists():
+        assert len(status.read_text().splitlines()) <= 60
 
 
 def test_architecture_porte_ad_2_et_ad_3_une_seule_fois():
