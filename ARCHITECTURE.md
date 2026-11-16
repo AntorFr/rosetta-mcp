@@ -439,6 +439,17 @@ absent or zero according to the proto3 JSON rule (midnight arrives without its `
 an unforecast gust is omitted, never 0 km/h. `maps` has a `_transport` hook since it was the
 only addon without tests.
 
+### AD-telephone-1 — `search_places` returns the place's phone, one more field in the same billing tier
+Each result carries `phone`: Google's `internationalPhoneNumber` (E.164-style, "+33 2 40 00 00 00"),
+asked through `places.internationalPhoneNumber` in the FieldMask of `search_places` only. A place
+without a number gets `phone: None` — the key is always present, like `rating` and `open_now`,
+and nothing else changes. Billing: checked against Google's Text Search field list (2026-11-16),
+`internationalPhoneNumber` is in the Enterprise SKU, the same as `rating`, `userRatingCount` and
+`currentOpeningHours`, already requested — no tier change. The international form was chosen over
+`nationalPhoneNumber`: unambiguous and dialable from anywhere. `geocode` (`_geocode`, Pro fields
+only) is untouched: adding the field there would move its calls to the Enterprise SKU. The tool
+description says the phone is returned.
+
 ### AD-doc-16 — `trace`: geometry never goes through the model
 `trace_calcule` returns figures and a URL; `GET /trace/geometrie` returns the polyline, which
 the caller writes straight to disk (a few hundred tokens instead of thousands, twice). The
