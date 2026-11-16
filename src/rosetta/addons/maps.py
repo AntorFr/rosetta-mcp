@@ -187,6 +187,9 @@ async def search_places(query: str, near: str | None = None, max_results: int = 
     query : ce qu'on cherche (« restaurant italien », « pharmacie de garde »…).
     near : optionnel, un lieu de contexte (« Nantes », « près de la gare »).
     max_results : nombre de résultats (défaut 5).
+
+    Chaque résultat porte `phone`, le numéro de téléphone du lieu (format
+    international) quand Google en a un, sinon None.
     """
     if err := _need_key():
         return {"error": err}
@@ -199,7 +202,8 @@ async def search_places(query: str, near: str | None = None, max_results: int = 
                 "X-Goog-FieldMask": (
                     "places.displayName,places.formattedAddress,places.location,"
                     "places.id,places.rating,places.userRatingCount,"
-                    "places.currentOpeningHours.openNow,places.primaryTypeDisplayName"
+                    "places.currentOpeningHours.openNow,places.primaryTypeDisplayName,"
+                    "places.internationalPhoneNumber"
                 ),
                 "Content-Type": "application/json",
             },
@@ -220,6 +224,7 @@ async def search_places(query: str, near: str | None = None, max_results: int = 
             "open_now": dig(p, "currentOpeningHours", "openNow"),
             "latlng": f"{loc.get('latitude')},{loc.get('longitude')}" if loc else None,
             "place_id": p.get("id"),
+            "phone": p.get("internationalPhoneNumber"),
         })
     return {"query": text, "results": out}
 

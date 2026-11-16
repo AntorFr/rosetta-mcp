@@ -1666,7 +1666,7 @@
         "name": "geocode"
       },
       {
-        "description": "Recherche de lieux (restaurants, hôtels, sites…) par texte libre.\n\nquery : ce qu'on cherche (« restaurant italien », « pharmacie de garde »…).\nnear : optionnel, un lieu de contexte (« Nantes », « près de la gare »).\nmax_results : nombre de résultats (défaut 5).",
+        "description": "Recherche de lieux (restaurants, hôtels, sites…) par texte libre.\n\nquery : ce qu'on cherche (« restaurant italien », « pharmacie de garde »…).\nnear : optionnel, un lieu de contexte (« Nantes », « près de la gare »).\nmax_results : nombre de résultats (défaut 5).\n\nChaque résultat porte `phone`, le numéro de téléphone du lieu (format\ninternational) quand Google en a un, sinon None.",
         "inputSchema": {
           "properties": {
             "max_results": {
