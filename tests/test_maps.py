@@ -209,3 +209,87 @@ def test_no_key_is_an_explicit_error_and_no_call(monkeypatch):
                 run(maps.weather_now("47.8,-4.3")),
                 run(maps.weather_forecast("47.8,-4.3"))):
         assert "GOOGLE_MAPS_API_KEY" in got["error"]
+
+
+# -- search_places: the phone number ----------------------------------------
+
+def _tool_fn(tool):
+    return getattr(tool, "fn", tool)
+
+
+PLACE_WITH_PHONE = {
+    "id": "P1",
+    "displayName": {"text": "Chez Luigi"},
+    "formattedAddress": "1 rue A, Nantes",
+    "location": {"latitude": 47.2, "longitude": -1.5},
+    "rating": 4.5,
+    "userRatingCount": 120,
+    "currentOpeningHours": {"openNow": True},
+    "primaryTypeDisplayName": {"text": "Restaurant italien"},
+    "internationalPhoneNumber": "+33 2 40 00 00 00",
+}
+PLACE_WITHOUT_PHONE = {k: v for k, v in PLACE_WITH_PHONE.items() if k != "internationalPhoneNumber"} | {"id": "P2"}
+
+
+def _search(monkeypatch, places, seen=None):
+    def handler(request):
+        if seen is not None:
+            seen["mask"] = request.headers["X-Goog-FieldMask"]
+        return httpx.Response(200, json={"places": places})
+
+    monkeypatch.setattr(maps, "_transport", mock(handler))
+    return run(maps.search_places("restaurant"))
+
+
+def test_search_places_asks_google_for_the_international_phone(monkeypatch):
+    seen = {}
+    _search(monkeypatch, [PLACE_WITH_PHONE], seen)
+    assert "places.internationalPhoneNumber" in seen["mask"].split(",")
+
+
+def test_search_places_returns_the_phone_of_each_place(monkeypatch):
+    out = _search(monkeypatch, [PLACE_WITH_PHONE, PLACE_WITHOUT_PHONE])["results"]
+    assert out[0]["phone"] == "+33 2 40 00 00 00"
+    assert out[1]["phone"] is None
+
+
+def test_search_places_without_phone_keeps_the_key_and_the_other_fields(monkeypatch):
+    with_, without = _search(monkeypatch, [PLACE_WITH_PHONE, PLACE_WITHOUT_PHONE])["results"]
+    assert "phone" in without
+    for key in ("name", "address", "type", "rating", "ratings_count", "open_now", "latlng"):
+        assert without[key] == with_[key]
+    assert without["name"] == "Chez Luigi"
+    assert without["latlng"] == "47.2,-1.5"
+    assert without["place_id"] == "P2"
+    assert set(with_) == set(without)
+
+
+def test_search_places_bare_place_does_not_fail(monkeypatch):
+    out = _search(monkeypatch, [{"id": "P3"}])["results"]
+    assert out[0]["phone"] is None and out[0]["place_id"] == "P3"
+
+
+def test_search_places_empty_phone_string_is_passed_through_not_invented(monkeypatch):
+    # Whatever Google sends is what is rendered; absence alone yields None.
+    out = _search(monkeypatch, [{"id": "P4", "internationalPhoneNumber": "+44 20 7946 0958"}])["results"]
+    assert out[0]["phone"] == "+44 20 7946 0958"
+
+
+def test_geocode_field_mask_stays_pro_only(monkeypatch):
+    # Excluded by the design: a phone there would move geocode to the Enterprise SKU.
+    seen = {}
+
+    def handler(request):
+        seen["mask"] = request.headers["X-Goog-FieldMask"]
+        return httpx.Response(200, json={"places": [PLACE_WITH_PHONE]})
+
+    monkeypatch.setattr(maps, "_transport", mock(handler))
+    out = run(maps.geocode("1 rue A, Nantes"))
+    assert "Phone" not in seen["mask"]
+    assert "phone" not in out
+
+
+def test_search_places_description_cites_the_phone():
+    import inspect
+    doc = inspect.getdoc(_tool_fn(maps.search_places)) or ""
+    assert "phone" in doc and "téléphone" in doc
