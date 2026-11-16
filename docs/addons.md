@@ -131,7 +131,7 @@ Google Maps Platform derrière une seule clé : temps de trajet, lieux, géocoda
 | Outil | Rôle |
 |---|---|
 | `geocode` | Convertit une adresse en coordonnées + adresse normalisée (utile pour désambiguïser). |
-| `search_places` | Recherche de lieux (restaurants, hôtels, sites…) par texte libre. |
+| `search_places` | Recherche de lieux (restaurants, hôtels, sites…) par texte libre ; chaque résultat porte `phone` (numéro international, `None` si Google n'en a pas). |
 | `travel_time` | Temps de trajet et distance entre deux lieux, trafic réel pris en compte. |
 | `weather_forecast` | Prévisions météo journalières (1 à 10 jours) pour un lieu (adresse ou « lat,lng »). |
 | `weather_hourly` | Prévisions météo HEURE PAR HEURE (1 à 24 h) pour un lieu (adresse ou « lat,lng »). |

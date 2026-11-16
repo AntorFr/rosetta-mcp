@@ -110,6 +110,9 @@ stays in git history. Rejected: keeping it as `docs/history.md` — 1000 lines o
 logbook, with obsolete checkboxes and pod-level infrastructure detail, mislead a pod
 more than they inform it.
 
+Since then a *short* `.agent/status.md` exists again (current state, what remains, live pitfalls),
+rewritten by each feature's assembly: it is not the retired logbook.
+
 ### AD-4 — "No functional change" is made testable
 Before any refactor, a characterisation test pins the tool surface (every addon's tool
 names and input schemas, the route list, `/health` shape) and the env variable names
@@ -439,6 +442,17 @@ absent or zero according to the proto3 JSON rule (midnight arrives without its `
 an unforecast gust is omitted, never 0 km/h. `maps` has a `_transport` hook since it was the
 only addon without tests.
 
+### AD-telephone-1 — `search_places` returns the place's phone, one more field in the same billing tier
+Each result carries `phone`: Google's `internationalPhoneNumber` (E.164-style, "+33 2 40 00 00 00"),
+asked through `places.internationalPhoneNumber` in the FieldMask of `search_places` only. A place
+without a number gets `phone: None` — the key is always present, like `rating` and `open_now`,
+and nothing else changes. Billing: checked against Google's Text Search field list (2026-11-16),
+`internationalPhoneNumber` is in the Enterprise SKU, the same as `rating`, `userRatingCount` and
+`currentOpeningHours`, already requested — no tier change. The international form was chosen over
+`nationalPhoneNumber`: unambiguous and dialable from anywhere. `geocode` (`_geocode`, Pro fields
+only) is untouched: adding the field there would move its calls to the Enterprise SKU. The tool
+description says the phone is returned.
+
 ### AD-doc-16 — `trace`: geometry never goes through the model
 `trace_calcule` returns figures and a URL; `GET /trace/geometrie` returns the polyline, which
 the caller writes straight to disk (a few hundred tokens instead of thousands, twice). The
@@ -488,7 +502,7 @@ owner is an error, never a guess.
 wherever it runs best). (1) The suite is declared in `.sdlc.yaml` (`tests:` — `commande`
 `scripts/suite-attestee.sh`, `rapport` `resultats.xml`, `format` `junit`, `delai` `15m`; the
 pytest alone measured 70 s on a pod, the whole command 4 min 21 s with a cold virtualenv; `delai` covers the latter). Two optional fields
-complete it: `local` (the local level, equal to `commande`: 637 tests, the slowest 3.5 s, no
+complete it: `local` (the local level, equal to `commande`: 663 tests, the slowest 3.5 s, no
 slow class to exclude) and `rejouer` (`scripts/rejouer.sh {tests}`, which replays only the
 named tests, same JUnit report, no lint or coverage, error on an unknown name). The script is what
 `docker-publish.yml` ran before and nothing else: build a virtualenv, `pip install -e .[dev]`,
