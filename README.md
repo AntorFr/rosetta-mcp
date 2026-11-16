@@ -198,6 +198,8 @@ ROSETTA_AUTH=off .venv/bin/uvicorn rosetta.main:app --port 8200   # local start 
 Once started with auth off, an addon answers MCP over POST on its slash-terminated path, e.g.
 `curl -s -X POST localhost:8200/food/ -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`.
 
+`scripts/suite-attestee.sh` is enough to judge a change locally: it recreates `.venv-suite` from scratch and takes a few minutes. `.agent/status.md` holds the current state and live pitfalls.
+
 To run it as the container (auth off, no secrets, local only):
 
 ```bash

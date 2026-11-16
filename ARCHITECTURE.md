@@ -110,6 +110,9 @@ stays in git history. Rejected: keeping it as `docs/history.md` — 1000 lines o
 logbook, with obsolete checkboxes and pod-level infrastructure detail, mislead a pod
 more than they inform it.
 
+Since then a *short* `.agent/status.md` exists again (current state, what remains, live pitfalls),
+rewritten by each feature's assembly: it is not the retired logbook.
+
 ### AD-4 — "No functional change" is made testable
 Before any refactor, a characterisation test pins the tool surface (every addon's tool
 names and input schemas, the route list, `/health` shape) and the env variable names
